@@ -1,5 +1,11 @@
 {
   "expo": {
+    "ios": {
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Your location is used to show your position relative to your cat."
+      },
+      "supportsTablet": true
+    },
     "name": "outdoor-cat-tracker",
     "slug": "outdoor-cat-tracker",
     "version": "1.0.0",
@@ -11,9 +17,6 @@
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
-    },
-    "ios": {
-      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
@@ -29,5 +32,6 @@
     "plugins": [
       "expo-font"
     ]
+    
   }
 }

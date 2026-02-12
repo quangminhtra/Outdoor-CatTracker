@@ -1,19 +1,30 @@
-import { View, StyleSheet } from "react-native";
-import { colors } from "../../theme";
+import { View, ViewProps, StyleSheet } from "react-native";
+import { colors, spacing } from "../../theme";
 
-export default function Card({ children }: { children: React.ReactNode }) {
-  return <View style={styles.card}>{children}</View>;
+type Props = ViewProps & {
+  padded?: boolean;
+};
+
+export default function Card({ padded = true, style, ...props }: Props) {
+  return (
+    <View
+      {...props}
+      style={[
+        styles.card,
+        padded && { padding: spacing.md },
+        style
+      ]}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    borderRadius: 14,
     shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
     elevation: 3
   }
 });

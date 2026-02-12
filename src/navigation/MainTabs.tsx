@@ -3,11 +3,12 @@ import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DashboardScreen from "../screens/dashboard/DashboardScreen";
 import MapScreen from "../screens/map/MapScreen";
-
+import AlertsScreen from "../screens/alerts/AlertsScreen";
+import SettingsScreen from "../screens/settings/SettingsScreen";
+import SettingsStack from "./SettingsStack";
 
 
 const Tab = createBottomTabNavigator();
-
 function PlaceholderScreen({ title }: { title: string }) {
   return (
     <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -34,18 +35,14 @@ export default function MainTabs() {
         }
       }}
     >
-      <Tab.Screen name="Dashboard" component={DashboardScreen} />
-
+     <Tab.Screen name="Dashboard" component={DashboardScreen} />
+      
      <Tab.Screen name="Map" component={MapScreen} />
 
+     <Tab.Screen name="Alerts" component={AlertsScreen} />
 
-      <Tab.Screen name="Alerts">
-        {() => <PlaceholderScreen title="Alerts" />}
-      </Tab.Screen>
+     <Tab.Screen name="Settings" component={SettingsStack} />
 
-      <Tab.Screen name="Settings">
-        {() => <PlaceholderScreen title="Settings" />}
-      </Tab.Screen>
     </Tab.Navigator>
   );
 }

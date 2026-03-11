@@ -4,7 +4,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   FlatList,
-  ActivityIndicator
+  ActivityIndicator,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { collection, doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
@@ -19,6 +20,7 @@ type Pet = {
   id: string;
   name: string;
   deviceId: string;
+  avatarUrl?: string;
 };
 
 export default function ManagePetsScreen({ navigation }: any) {
@@ -36,7 +38,10 @@ export default function ManagePetsScreen({ navigation }: any) {
         return {
           id: d.id,
           name: typeof data.name === "string" ? data.name : "Unnamed pet",
-          deviceId: typeof data.deviceId === "string" ? data.deviceId : "—"
+          deviceId: typeof data.deviceId === "string" ? data.deviceId : "—",
+          avatarUrl: typeof data.avatarUrl === "string" && data.avatarUrl.trim()
+            ? data.avatarUrl
+            : undefined,
         };
       });
       setPets(list);
@@ -61,8 +66,8 @@ export default function ManagePetsScreen({ navigation }: any) {
       lastLocation: {
         lat: 43.6577,
         lng: -79.3792,
-        timestamp: Math.floor(Date.now() / 1000)
-      }
+        timestamp: Math.floor(Date.now() / 1000),
+      },
     });
 
     await updateDoc(doc(db, "users", uid), { activePetId: petId });
@@ -113,9 +118,21 @@ export default function ManagePetsScreen({ navigation }: any) {
                   onPress={() => openPet(item.id)}
                   activeOpacity={0.85}
                 >
-                  <View style={{ flex: 1 }}>
-                    <AppText style={styles.petName}>{item.name}</AppText>
-                    <AppText style={styles.subText}>Device ID: {item.deviceId}</AppText>
+                  <View style={styles.rowLeft}>
+                    <View style={styles.avatarWrap}>
+                      {item.avatarUrl ? (
+                        <Image source={{ uri: item.avatarUrl }} style={styles.avatarImage} />
+                      ) : (
+                        <View style={styles.avatarFallback}>
+                          <AppText style={styles.avatarFallbackText}>🐱</AppText>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <AppText style={styles.petName}>{item.name}</AppText>
+                      <AppText style={styles.subText}>Device ID: {item.deviceId}</AppText>
+                    </View>
                   </View>
 
                   <AppText style={styles.chev}>›</AppText>
@@ -132,30 +149,28 @@ export default function ManagePetsScreen({ navigation }: any) {
   );
 }
 
-const GREEN = "#5E8F3C";
-
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: "#fff"
+    backgroundColor: "#fff",
   },
   contentSafe: {
-    flex: 1
+    flex: 1,
   },
   container: {
     flex: 1,
     backgroundColor: "#fff",
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.lg
+    paddingTop: spacing.lg,
   },
   center: {
     flex: 1,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
   },
   muted: {
     marginTop: spacing.sm,
-    color: "rgba(0,0,0,0.6)"
+    color: "rgba(0,0,0,0.6)",
   },
 
   row: {
@@ -171,9 +186,34 @@ const styles = StyleSheet.create({
     shadowColor: "#000",
     shadowOpacity: 0.06,
     shadowRadius: 10,
-    elevation: 3
+    elevation: 3,
   },
+  rowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  avatarWrap: {
+    marginRight: spacing.md,
+  },
+  avatarImage: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+  },
+  avatarFallback: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarFallbackText: {
+    fontSize: 22,
+  },
+
   petName: { fontWeight: "900", color: "#111" },
   subText: { color: "rgba(0,0,0,0.6)", marginTop: 2 },
-  chev: { fontSize: 26, color: "rgba(0,0,0,0.35)", marginLeft: spacing.sm }
+  chev: { fontSize: 26, color: "rgba(0,0,0,0.35)", marginLeft: spacing.sm },
 });

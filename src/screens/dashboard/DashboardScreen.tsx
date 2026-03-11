@@ -1,18 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { View, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
+import { View, StyleSheet, TouchableOpacity, ActivityIndicator, Image } from "react-native";
 import MapView, { Marker, Circle, Polyline, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { addDoc, collection, doc, onSnapshot } from "firebase/firestore";
-
+import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../config/firebase";
 import { spacing, typography } from "../../theme";
 import { haversineMeters } from "../../utils/geo";
 import AppText from "../../components/ui/AppText";
-import {
-  setupNotifications,
-  sendBatteryLowNotification,
-  sendBatteryFullNotification
-} from "../../services/notificationService";
+import { setupNotifications } from "../../services/notificationService";
+
 
 type LatLng = { latitude: number; longitude: number };
 
@@ -29,21 +25,56 @@ type PetDoc = {
   lastLocation?: { lat?: number; lng?: number; timestamp?: number };
 };
 
-type DeviceDoc = {
-  batteryPct?: number;
-  lastLocation?: { lat?: number; lng?: number; timestamp?: number };
-  lastSeen?: number;
+type ApiPing = {
+  pingId: number | null;
+  deviceId: string;
+  lat: number;
+  lng: number;
+  serverTimeMs: number;
 };
 
 const GREEN = "#5E8F3C";
 const YELLOW = "#F4D35E";
+
+const API_BASE = "https://oblanceolate-unfactual-mckinley.ngrok-free.dev";
+const POLL_MS = 5000;
+
+function isValidLatLng(lat: number, lng: number) {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+  );
+}
+
+async function fetchLatestPing(deviceId: string): Promise<ApiPing> {
+  const reqTime = Date.now();
+  const url = `${API_BASE}/api/recentPing/${encodeURIComponent(deviceId)}/${reqTime}`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+
+  const raw = await res.json();
+
+  const adapted: ApiPing = {
+    pingId: raw.id ?? null,
+    deviceId: raw.device_id,
+    lat: parseFloat(raw.lat),
+    lng: parseFloat(raw.long),
+    serverTimeMs: parseInt(raw.date) * 1000,
+  };
+
+  return adapted;
+}
 
 export default function DashboardScreen({ navigation }: any) {
   const uid = auth.currentUser?.uid;
   const mapRef = useRef<MapView>(null);
 
   const [loading, setLoading] = useState(true);
-
   const [activePetId, setActivePetId] = useState<string | null>(null);
 
   const [petName, setPetName] = useState("—");
@@ -52,27 +83,20 @@ export default function DashboardScreen({ navigation }: any) {
 
   const [geofence, setGeofence] = useState<Geofence>({
     center: { lat: 43.6577, lng: -79.3792 },
-    radiusMeters: 120
+    radiusMeters: 120,
   });
 
-  // cached fallback location on pet doc (prevents pin disappearing)
   const [petCachedLoc, setPetCachedLoc] = useState<LatLng | null>(null);
+  const [petCachedTsMs, setPetCachedTsMs] = useState<number | null>(null);
 
-  // device-driven location + status
   const [deviceLoc, setDeviceLoc] = useState<LatLng | null>(null);
-  const [batteryPct, setBatteryPct] = useState<number | null>(null);
-  const [lastSeen, setLastSeen] = useState<number | null>(null);
-  const [lastTs, setLastTs] = useState<number | null>(null);
-
-  // threshold tracking
-  const prevBatteryRef = useRef<number | null>(null);
-  const lastBatteryAlertAtRef = useRef<number>(0);
+  const [lastSeenMs, setLastSeenMs] = useState<number | null>(null);
+  const [lastTsMs, setLastTsMs] = useState<number | null>(null);
 
   useEffect(() => {
     setupNotifications();
   }, []);
 
-  // 1) user doc -> activePetId
   useEffect(() => {
     if (!uid) return;
 
@@ -85,11 +109,16 @@ export default function DashboardScreen({ navigation }: any) {
     return () => unsub();
   }, [uid]);
 
-  // 2) pet doc -> name, breed, deviceId, geofence, cached location
   useEffect(() => {
     if (!uid || !activePetId) return;
 
     setLoading(true);
+
+    setPetName("—");
+    setPetBreed(undefined);
+    setDeviceId(null);
+    setPetCachedLoc(null);
+    setPetCachedTsMs(null);
 
     const petRef = doc(db, "users", uid, "pets", activePetId);
     const unsub = onSnapshot(petRef, (snap) => {
@@ -115,13 +144,16 @@ export default function DashboardScreen({ navigation }: any) {
       const ll = data.lastLocation;
       const latNum = typeof ll?.lat === "number" ? ll.lat : Number(ll?.lat);
       const lngNum = typeof ll?.lng === "number" ? ll.lng : Number(ll?.lng);
+      const tsNum = typeof ll?.timestamp === "number" ? ll.timestamp : Number(ll?.timestamp);
 
       if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
         setPetCachedLoc({ latitude: latNum, longitude: lngNum });
-        if (typeof ll?.timestamp === "number") setLastTs(ll.timestamp);
       } else {
         setPetCachedLoc(null);
       }
+
+      if (Number.isFinite(tsNum)) setPetCachedTsMs(tsNum);
+      else setPetCachedTsMs(null);
 
       setLoading(false);
     });
@@ -129,44 +161,44 @@ export default function DashboardScreen({ navigation }: any) {
     return () => unsub();
   }, [uid, activePetId]);
 
-  // 3) device doc -> lastLocation, batteryPct, lastSeen
   useEffect(() => {
     setDeviceLoc(null);
-    setBatteryPct(null);
-    setLastSeen(null);
-    prevBatteryRef.current = null;
+    setLastSeenMs(null);
+    setLastTsMs(null);
 
     if (!deviceId) return;
 
-    const devRef = doc(db, "devices", deviceId);
-    const unsub = onSnapshot(devRef, (snap) => {
-      const data = snap.data() as DeviceDoc | undefined;
-      if (!data) return;
+    let cancelled = false;
 
-      const ll = data.lastLocation;
-      const latNum = typeof ll?.lat === "number" ? ll.lat : Number(ll?.lat);
-      const lngNum = typeof ll?.lng === "number" ? ll.lng : Number(ll?.lng);
+    const run = async () => {
+      try {
+        const ping = await fetchLatestPing(deviceId);
+        if (cancelled) return;
 
-      if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
-        setDeviceLoc({ latitude: latNum, longitude: lngNum });
-        if (typeof ll?.timestamp === "number") setLastTs(ll.timestamp);
-      } else {
-        setDeviceLoc(null);
+        if (!isValidLatLng(ping.lat, ping.lng)) return;
+
+        setDeviceLoc({ latitude: ping.lat, longitude: ping.lng });
+        setLastTsMs(ping.serverTimeMs);
+        setLastSeenMs(ping.serverTimeMs);
+      } catch {
+        // ignore polling errors; fallback UI will show cached state if available
       }
+    };
 
-      if (typeof data.batteryPct === "number") setBatteryPct(data.batteryPct);
-      if (typeof data.lastSeen === "number") setLastSeen(data.lastSeen);
-    });
+    run();
+    const timer = setInterval(run, POLL_MS);
 
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [deviceId]);
 
-  // choose best location
   const catLocation = deviceLoc ?? petCachedLoc;
 
-  // distance
   const distanceMeters = useMemo(() => {
     if (!catLocation) return null;
+
     return haversineMeters(
       catLocation.latitude,
       catLocation.longitude,
@@ -181,93 +213,55 @@ export default function DashboardScreen({ navigation }: any) {
     return `${distanceMeters.toFixed(0)} m`;
   }, [distanceMeters]);
 
+  const safeZoneText = useMemo(() => {
+    if (!catLocation || distanceMeters === null) return "—";
+    return distanceMeters <= geofence.radiusMeters ? "Inside" : "Outside";
+  }, [catLocation, distanceMeters, geofence.radiusMeters]);
+
   const lastSeenText = useMemo(() => {
-    if (!lastSeen) return "—";
-    const now = Math.floor(Date.now() / 1000);
-    const age = now - lastSeen;
-    if (age < 60) return "Just now";
-    const mins = Math.floor(age / 60);
+    const t = lastSeenMs ?? petCachedTsMs ?? null;
+    if (!t) return "—";
+
+    const ageMs = Date.now() - t;
+    if (ageMs < 60_000) return "Just now";
+
+    const mins = Math.floor(ageMs / 60_000);
     if (mins < 60) return `${mins} mins ago`;
+
     const hrs = Math.floor(mins / 60);
     return `${hrs} hrs ago`;
-  }, [lastSeen]);
+  }, [lastSeenMs, petCachedTsMs]);
 
-  // write battery alerts into Firestore alerts collection
-  async function logBatteryAlert(type: "BATTERY_LOW" | "BATTERY_FULL", message: string) {
-    if (!uid || !activePetId) return;
-
-    const alertsRef = collection(db, "users", uid, "pets", activePetId, "alerts");
-    await addDoc(alertsRef, {
-      type,
-      message,
-      timestamp: Math.floor(Date.now() / 1000)
-    });
-  }
-
-  // Battery notifications (threshold crossing + throttle)
-  useEffect(() => {
-    if (batteryPct === null) return;
-
-    const prev = prevBatteryRef.current;
-    prevBatteryRef.current = batteryPct;
-
-    // first reading -> don’t fire
-    if (prev === null) return;
-
-    const nowMs = Date.now();
-    const lastMs = lastBatteryAlertAtRef.current;
-
-    // throttle: avoid spam if device doc updates rapidly
-    const canNotify = nowMs - lastMs > 60 * 1000; // 1 minute
-    if (!canNotify) return;
-
-    // LOW: cross >25 -> <=25
-    if (prev > 25 && batteryPct <= 25) {
-      lastBatteryAlertAtRef.current = nowMs;
-      const msg = `${petName} battery is low (${batteryPct}%). Please charge the tracker.`;
-      sendBatteryLowNotification(msg);
-      logBatteryAlert("BATTERY_LOW", msg);
-      return;
-    }
-
-    // FULL: cross <100 -> >=100
-    if (prev < 100 && batteryPct >= 100) {
-      lastBatteryAlertAtRef.current = nowMs;
-      const msg = `${petName} is fully charged (100%).`;
-      sendBatteryFullNotification(msg);
-      logBatteryAlert("BATTERY_FULL", msg);
-    }
-  }, [batteryPct, petName]); // uses refs for prev/throttle
-
-  // preview region
   const previewRegion: Region = useMemo(() => {
     const home = { latitude: geofence.center.lat, longitude: geofence.center.lng };
     const center = catLocation ?? home;
+
     return {
       latitude: center.latitude,
       longitude: center.longitude,
       latitudeDelta: 0.02,
-      longitudeDelta: 0.02
+      longitudeDelta: 0.02,
     };
   }, [catLocation, geofence.center.lat, geofence.center.lng]);
 
-  // fit to show both markers
   useEffect(() => {
     if (!mapRef.current) return;
 
     const home = { latitude: geofence.center.lat, longitude: geofence.center.lng };
+
     if (catLocation) {
       mapRef.current.fitToCoordinates([home, catLocation], {
         edgePadding: { top: 40, right: 40, bottom: 40, left: 40 },
-        animated: true
+        animated: true,
       });
     }
   }, [catLocation, geofence.center.lat, geofence.center.lng]);
 
   const updatedText = useMemo(() => {
-    if (!lastTs) return "—";
-    return new Date(lastTs * 1000).toLocaleTimeString();
-  }, [lastTs]);
+    const t = lastTsMs ?? petCachedTsMs ?? null;
+    if (!t) return "—";
+    return new Date(t).toLocaleTimeString();
+  }, [lastTsMs, petCachedTsMs]);
 
   if (!uid) {
     return (
@@ -299,7 +293,6 @@ export default function DashboardScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      {/* Green Header */}
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <AppText style={styles.paw}>🐾</AppText>
@@ -310,7 +303,6 @@ export default function DashboardScreen({ navigation }: any) {
       </View>
 
       <View style={styles.content}>
-        {/* Yellow Pet dropdown bar (for now it just opens ManagePets) */}
         <TouchableOpacity
           style={styles.petCard}
           activeOpacity={0.85}
@@ -330,7 +322,6 @@ export default function DashboardScreen({ navigation }: any) {
           <AppText style={styles.chevron}>⌄</AppText>
         </TouchableOpacity>
 
-        {/* Map Preview */}
         <View style={styles.mapWrap}>
           <MapView
             ref={mapRef}
@@ -338,57 +329,59 @@ export default function DashboardScreen({ navigation }: any) {
             initialRegion={previewRegion}
             pointerEvents="none"
           >
-            {/* Home */}
             <Marker
               coordinate={{ latitude: geofence.center.lat, longitude: geofence.center.lng }}
               title="Home"
-              anchor={{ x: 0.5, y: 0.5 }}>             
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
               <View style={styles.homeMarker}>
-              <AppText style={styles.homeMarkerText}>🏠</AppText>
-             </View>
+                <AppText style={styles.homeMarkerText}>🏠</AppText>
+              </View>
             </Marker>
-
 
             <Circle
               center={{ latitude: geofence.center.lat, longitude: geofence.center.lng }}
               radius={geofence.radiusMeters}
               strokeWidth={2}
-              strokeColor={"rgba(255, 255, 255, 0.9)"}
-              fillColor={"rgba(255, 153, 0, 0.15)"}
+              strokeColor="rgba(255, 255, 255, 0.9)"
+              fillColor="rgba(255, 153, 0, 0.15)"
             />
 
-            {/* Cat */}
             {catLocation ? (
               <>
                 <Marker coordinate={catLocation} title={petName} />
                 <Polyline
                   coordinates={[
                     { latitude: geofence.center.lat, longitude: geofence.center.lng },
-                    catLocation
+                    catLocation,
                   ]}
                   strokeWidth={3}
-                  strokeColor={"rgba(0,0,0,0.55)"}
+                  strokeColor="rgba(0,0,0,0.55)"
                 />
               </>
             ) : null}
           </MapView>
 
-          {/* Distance ON MAP */}
           <View style={styles.mapPill}>
             <AppText style={styles.mapPillText}>Distance: {distanceText}</AppText>
           </View>
         </View>
 
-        {/* Bottom “pills” */}
         <View style={styles.pillsRow}>
           <TouchableOpacity
             style={styles.pill}
             activeOpacity={0.85}
-            onPress={() => navigation.navigate("Alerts")}
+            onPress={() => navigation.navigate("Map")}
           >
-            <AppText style={styles.pillTitle}>Battery</AppText>
-            <AppText style={styles.pillValue}>
-              {batteryPct === null ? "—" : `${batteryPct}%`}
+            <AppText style={styles.pillTitle}>Safe Zone</AppText>
+            <AppText
+              style={[
+                styles.pillValue,
+                safeZoneText === "Inside" && styles.safeInside,
+                safeZoneText === "Outside" && styles.safeOutside,
+              ]}
+            >
+              {safeZoneText}
             </AppText>
           </TouchableOpacity>
 
@@ -411,7 +404,6 @@ export default function DashboardScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
 
-        {/* Quick link */}
         <TouchableOpacity
           style={styles.openMapBtn}
           onPress={() => navigation.navigate("Map")}
@@ -432,7 +424,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.25)"
+    borderBottomColor: "rgba(255,255,255,0.25)",
   },
   headerRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   paw: { fontSize: 20, color: "#111" },
@@ -447,7 +439,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: spacing.md
+    marginBottom: spacing.md,
   },
   petLeft: { flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1 },
   petAvatar: {
@@ -456,7 +448,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     backgroundColor: "rgba(0,0,0,0.12)",
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
   },
   petNameText: { ...typography.subheading, color: "#2b4b1f" },
   petSubText: { ...typography.body, color: "rgba(0,0,0,0.55)", marginTop: 2 },
@@ -467,7 +459,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     overflow: "hidden",
     backgroundColor: "rgba(255,255,255,0.18)",
-    marginBottom: spacing.md
+    marginBottom: spacing.md,
   },
   map: { flex: 1 },
 
@@ -478,14 +470,14 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.55)",
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 8
+    paddingVertical: 8,
   },
   mapPillText: { ...typography.body, color: "#fff", fontWeight: "800" },
 
   pillsRow: {
     flexDirection: "row",
     gap: spacing.sm,
-    marginBottom: spacing.md
+    marginBottom: spacing.md,
   },
   pill: {
     flex: 1,
@@ -493,33 +485,41 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: spacing.md,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
   },
   pillTitle: { ...typography.body, color: "rgba(0,0,0,0.65)", fontWeight: "800" },
-  pillValue: { ...typography.subheading, color: "#111", marginTop: 4 },
+  pillValue: {
+    ...typography.subheading,
+    color: "#111",
+    marginTop: 4,
+    fontWeight: "900",
+  },
+  safeInside: {
+    color: "#2E7D32",
+  },
+  safeOutside: {
+    color: "#C62828",
+  },
 
   openMapBtn: {
     backgroundColor: "rgba(255,255,255,0.92)",
     borderRadius: 18,
     paddingVertical: 14,
-    alignItems: "center"
+    alignItems: "center",
   },
   openMapText: { ...typography.body, color: "#111", fontWeight: "900" },
 
   center: { flex: 1, justifyContent: "center", alignItems: "center", padding: spacing.lg },
 
   homeMarker: {
-  width: 34,
-  height: 34,
-  borderRadius: 17,
-  backgroundColor: "rgba(255,255,255,0.95)",
-  alignItems: "center",
-  justifyContent: "center",
-  borderWidth: 2,
-  borderColor: "rgba(0,0,0,0.15)"
-},
-homeMarkerText: {
-  fontSize: 18
-},
-
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "rgba(0,0,0,0.15)",
+  },
+  homeMarkerText: { fontSize: 18 },
 });

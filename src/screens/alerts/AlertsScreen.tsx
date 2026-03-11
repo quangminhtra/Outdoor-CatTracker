@@ -36,7 +36,8 @@ type AlertDoc = {
   type: "GEOFENCE_EXIT" | "GEOFENCE_RETURN" | string;
   message: string;
   actionTip?: string;
-  timestamp: number; // unix seconds
+  timestampMs?: number;
+  timestamp?: number; // keep temporary backward compatibility for older alerts
 };
 
 export default function AlertsScreen() {
@@ -157,7 +158,7 @@ useEffect(() => {
     }
 
     const ref = collection(db, "users", uid, "pets", activePetId, "alerts");
-    const q = query(ref, orderBy("timestamp", "desc"));
+    const q = query(ref, orderBy("timestampMs", "desc"));
 
     const unsub = onSnapshot(q, (snap) => {
       const items: AlertDoc[] = snap.docs.map((d) => {
@@ -236,9 +237,14 @@ async function toggleNotifications(enabled: boolean) {
   }
 
   const renderItem = ({ item }: { item: AlertDoc }) => {
-    const timeText = item.timestamp
-      ? new Date(item.timestamp * 1000).toLocaleString()
-      : "—";
+    const rawTime =
+    typeof item.timestampMs === "number"
+      ? item.timestampMs
+      : typeof item.timestamp === "number"
+      ? item.timestamp * 1000
+      : null;
+
+const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
 
     const visual = getAlertVisual(item.type);
 

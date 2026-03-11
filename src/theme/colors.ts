@@ -1,10 +1,10 @@
 export const colors = {
-  primary: "#2E7D32",       // Primary green (main actions)
-  accent: "#F9A825",        // Yellow accent
-  background: "#F5F6F7",    // App background
-  card: "#FFFFFF",          // Card surfaces
-  textPrimary: "#212121",   // Main text
-  textSecondary: "#616161", // Secondary text
-  error: "#D32F2F",         // Errors
-  border: "#E0E0E0"
+  primary: "#2F855A",
+  accent: "#D69E2E",
+  background: "#F7F8FA",
+  card: "#FFFFFF",
+  textPrimary: "#1F2937",
+  textSecondary: "#6B7280",
+  error: "#DC2626",
+  border: "#E5E7EB",
 };

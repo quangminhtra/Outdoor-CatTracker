@@ -37,24 +37,3 @@ export async function sendGeofenceReturnNotification() {
   });
 }
 
-export async function sendBatteryLowNotification(body: string) {
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "Low Battery",
-      body,
-      sound: "default"
-    },
-    trigger: null
-  });
-}
-
-export async function sendBatteryFullNotification(body: string) {
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "Battery Full",
-      body,
-      sound: "default"
-    },
-    trigger: null
-  });
-}

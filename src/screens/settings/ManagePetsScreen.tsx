@@ -20,7 +20,7 @@ type Pet = {
   id: string;
   name: string;
   deviceId: string;
-  avatarUrl?: string;
+  avatarBase64?: string;
 };
 
 export default function ManagePetsScreen({ navigation }: any) {
@@ -39,9 +39,8 @@ export default function ManagePetsScreen({ navigation }: any) {
           id: d.id,
           name: typeof data.name === "string" ? data.name : "Unnamed pet",
           deviceId: typeof data.deviceId === "string" ? data.deviceId : "—",
-          avatarUrl: typeof data.avatarUrl === "string" && data.avatarUrl.trim()
-            ? data.avatarUrl
-            : undefined,
+          avatarBase64:
+            typeof data.avatarBase64 === "string" ? data.avatarBase64 : undefined,
         };
       });
       setPets(list);
@@ -60,7 +59,7 @@ export default function ManagePetsScreen({ navigation }: any) {
       breed: "—",
       colorPattern: "—",
       deviceId: "DEMO-DEVICE",
-      avatarUrl: "",
+      avatarBase64: "",
       geofence: { center: { lat: 43.6577, lng: -79.3792 }, radiusMeters: 120 },
       prefs: { notifyExit: true, notifyReturn: true },
       lastLocation: {
@@ -119,19 +118,22 @@ export default function ManagePetsScreen({ navigation }: any) {
                   activeOpacity={0.85}
                 >
                   <View style={styles.rowLeft}>
-                    <View style={styles.avatarWrap}>
-                      {item.avatarUrl ? (
-                        <Image source={{ uri: item.avatarUrl }} style={styles.avatarImage} />
-                      ) : (
-                        <View style={styles.avatarFallback}>
-                          <AppText style={styles.avatarFallbackText}>🐱</AppText>
-                        </View>
-                      )}
-                    </View>
+                    {item.avatarBase64 ? (
+                      <Image
+                        source={{ uri: item.avatarBase64 }}
+                        style={styles.avatarImage}
+                      />
+                    ) : (
+                      <View style={styles.avatarFallback}>
+                        <AppText style={styles.avatarFallbackText}>🐱</AppText>
+                      </View>
+                    )}
 
                     <View style={{ flex: 1 }}>
                       <AppText style={styles.petName}>{item.name}</AppText>
-                      <AppText style={styles.subText}>Device ID: {item.deviceId}</AppText>
+                      <AppText style={styles.subText}>
+                        Device ID: {item.deviceId}
+                      </AppText>
                     </View>
                   </View>
 
@@ -188,19 +190,20 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 3,
   },
+
   rowLeft: {
     flexDirection: "row",
     alignItems: "center",
     flex: 1,
   },
-  avatarWrap: {
-    marginRight: spacing.md,
-  },
+
   avatarImage: {
     width: 52,
     height: 52,
     borderRadius: 16,
+    marginRight: spacing.md,
   },
+
   avatarFallback: {
     width: 52,
     height: 52,
@@ -208,12 +211,26 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.06)",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: spacing.md,
   },
+
   avatarFallbackText: {
     fontSize: 22,
   },
 
-  petName: { fontWeight: "900", color: "#111" },
-  subText: { color: "rgba(0,0,0,0.6)", marginTop: 2 },
-  chev: { fontSize: 26, color: "rgba(0,0,0,0.35)", marginLeft: spacing.sm },
+  petName: {
+    fontWeight: "900",
+    color: "#111",
+  },
+
+  subText: {
+    color: "rgba(0,0,0,0.6)",
+    marginTop: 2,
+  },
+
+  chev: {
+    fontSize: 26,
+    color: "rgba(0,0,0,0.35)",
+    marginLeft: spacing.sm,
+  },
 });

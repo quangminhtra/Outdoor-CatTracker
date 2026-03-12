@@ -1,14 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { View, StyleSheet, TouchableOpacity, ActivityIndicator, Image } from "react-native";
+import {
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Image,
+  Modal,
+  Pressable,
+} from "react-native";
 import MapView, { Marker, Circle, Polyline, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
+
 import { auth, db } from "../../config/firebase";
 import { spacing, typography } from "../../theme";
 import { haversineMeters } from "../../utils/geo";
 import AppText from "../../components/ui/AppText";
 import { setupNotifications } from "../../services/notificationService";
-
 
 type LatLng = { latitude: number; longitude: number };
 
@@ -21,8 +29,17 @@ type PetDoc = {
   name?: string;
   breed?: string;
   deviceId?: string;
+  avatarBase64?: string;
   geofence?: Geofence;
   lastLocation?: { lat?: number; lng?: number; timestamp?: number };
+};
+
+type PetOption = {
+  id: string;
+  name: string;
+  breed?: string;
+  colorPattern?: string;
+  avatarBase64?: string;
 };
 
 type ApiPing = {
@@ -59,15 +76,13 @@ async function fetchLatestPing(deviceId: string): Promise<ApiPing> {
 
   const raw = await res.json();
 
-  const adapted: ApiPing = {
+  return {
     pingId: raw.id ?? null,
     deviceId: raw.device_id,
     lat: parseFloat(raw.lat),
     lng: parseFloat(raw.long),
     serverTimeMs: parseInt(raw.date) * 1000,
   };
-
-  return adapted;
 }
 
 export default function DashboardScreen({ navigation }: any) {
@@ -80,6 +95,10 @@ export default function DashboardScreen({ navigation }: any) {
   const [petName, setPetName] = useState("—");
   const [petBreed, setPetBreed] = useState<string | undefined>(undefined);
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [avatarBase64, setAvatarBase64] = useState<string>("");
+
+  const [pets, setPets] = useState<PetOption[]>([]);
+  const [petModalOpen, setPetModalOpen] = useState(false);
 
   const [geofence, setGeofence] = useState<Geofence>({
     center: { lat: 43.6577, lng: -79.3792 },
@@ -92,6 +111,8 @@ export default function DashboardScreen({ navigation }: any) {
   const [deviceLoc, setDeviceLoc] = useState<LatLng | null>(null);
   const [lastSeenMs, setLastSeenMs] = useState<number | null>(null);
   const [lastTsMs, setLastTsMs] = useState<number | null>(null);
+
+  const [trackMarkerViewChanges, setTrackMarkerViewChanges] = useState(true);
 
   useEffect(() => {
     setupNotifications();
@@ -110,6 +131,30 @@ export default function DashboardScreen({ navigation }: any) {
   }, [uid]);
 
   useEffect(() => {
+    if (!uid) return;
+
+    const petsRef = collection(db, "users", uid, "pets");
+    const unsub = onSnapshot(petsRef, (snap) => {
+      const list: PetOption[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          name: typeof data?.name === "string" ? data.name : d.id,
+          breed: typeof data?.breed === "string" ? data.breed : undefined,
+          colorPattern:
+            typeof data?.colorPattern === "string" ? data.colorPattern : undefined,
+          avatarBase64:
+            typeof data?.avatarBase64 === "string" ? data.avatarBase64 : undefined,
+        };
+      });
+
+      setPets(list);
+    });
+
+    return () => unsub();
+  }, [uid]);
+
+  useEffect(() => {
     if (!uid || !activePetId) return;
 
     setLoading(true);
@@ -117,6 +162,7 @@ export default function DashboardScreen({ navigation }: any) {
     setPetName("—");
     setPetBreed(undefined);
     setDeviceId(null);
+    setAvatarBase64("");
     setPetCachedLoc(null);
     setPetCachedTsMs(null);
 
@@ -130,6 +176,10 @@ export default function DashboardScreen({ navigation }: any) {
 
       const dev = data.deviceId;
       setDeviceId(typeof dev === "string" && dev.trim() ? dev : null);
+
+      setAvatarBase64(
+        typeof data.avatarBase64 === "string" ? data.avatarBase64 : ""
+      );
 
       const gf = data.geofence;
       if (
@@ -181,7 +231,7 @@ export default function DashboardScreen({ navigation }: any) {
         setLastTsMs(ping.serverTimeMs);
         setLastSeenMs(ping.serverTimeMs);
       } catch {
-        // ignore polling errors; fallback UI will show cached state if available
+        // fallback still works from cached pet location
       }
     };
 
@@ -195,6 +245,16 @@ export default function DashboardScreen({ navigation }: any) {
   }, [deviceId]);
 
   const catLocation = deviceLoc ?? petCachedLoc;
+
+  useEffect(() => {
+    setTrackMarkerViewChanges(true);
+
+    const timeout = setTimeout(() => {
+      setTrackMarkerViewChanges(false);
+    }, 1000);
+
+    return () => clearTimeout(timeout);
+  }, [avatarBase64, catLocation]);
 
   const distanceMeters = useMemo(() => {
     if (!catLocation) return null;
@@ -263,6 +323,16 @@ export default function DashboardScreen({ navigation }: any) {
     return new Date(t).toLocaleTimeString();
   }, [lastTsMs, petCachedTsMs]);
 
+  function openPetSwitcher() {
+    setPetModalOpen(true);
+  }
+
+  async function selectPet(petId: string) {
+    if (!uid) return;
+    await updateDoc(doc(db, "users", uid), { activePetId: petId });
+    setPetModalOpen(false);
+  }
+
   if (!uid) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -306,11 +376,15 @@ export default function DashboardScreen({ navigation }: any) {
         <TouchableOpacity
           style={styles.petCard}
           activeOpacity={0.85}
-          onPress={() => navigation.navigate("ManagePets")}
+          onPress={openPetSwitcher}
         >
           <View style={styles.petLeft}>
             <View style={styles.petAvatar}>
-              <AppText style={{ fontSize: 18 }}>🐱</AppText>
+              {avatarBase64 ? (
+                <Image source={{ uri: avatarBase64 }} style={styles.petAvatarImage} />
+              ) : (
+                <AppText style={styles.petAvatarFallback}>🐱</AppText>
+              )}
             </View>
 
             <View style={{ flex: 1 }}>
@@ -349,7 +423,32 @@ export default function DashboardScreen({ navigation }: any) {
 
             {catLocation ? (
               <>
-                <Marker coordinate={catLocation} title={petName} />
+                <Marker
+                  key={`${activePetId}-${avatarBase64 ? "avatar" : "fallback"}-${catLocation.latitude}-${catLocation.longitude}`}
+                  coordinate={catLocation}
+                  title={petName}
+                  tracksViewChanges={trackMarkerViewChanges}
+                >
+                  <View
+                    style={[
+                      styles.mapPetMarkerWrap,
+                      safeZoneText === "Inside"
+                        ? styles.mapPetMarkerInside
+                        : styles.mapPetMarkerOutside,
+                    ]}
+                  >
+                    {avatarBase64 ? (
+                      <Image
+                        source={{ uri: avatarBase64 }}
+                        style={styles.mapPetMarkerImage}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <AppText style={styles.mapPetMarkerFallback}>🐱</AppText>
+                    )}
+                  </View>
+                </Marker>
+
                 <Polyline
                   coordinates={[
                     { latitude: geofence.center.lat, longitude: geofence.center.lng },
@@ -412,6 +511,57 @@ export default function DashboardScreen({ navigation }: any) {
           <AppText style={styles.openMapText}>Open Live Map • Updated {updatedText}</AppText>
         </TouchableOpacity>
       </View>
+
+      <Modal
+        transparent
+        visible={petModalOpen}
+        animationType="slide"
+        onRequestClose={() => setPetModalOpen(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setPetModalOpen(false)} />
+        <View style={styles.modalSheet}>
+          <AppText variant="subheading" style={styles.modalTitle}>
+            Select Pet
+          </AppText>
+
+          {pets.map((p) => {
+            const selected = p.id === activePetId;
+            return (
+              <TouchableOpacity
+                key={p.id}
+                style={[styles.modalItem, selected && styles.modalItemSelected]}
+                onPress={() => selectPet(p.id)}
+                activeOpacity={0.85}
+              >
+                <View style={styles.modalAvatar}>
+                  {p.avatarBase64 ? (
+                    <Image source={{ uri: p.avatarBase64 }} style={styles.modalAvatarImage} />
+                  ) : (
+                    <AppText style={styles.modalAvatarText}>🐱</AppText>
+                  )}
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <AppText style={styles.modalName}>{p.name}</AppText>
+                  <AppText style={styles.modalSub}>
+                    {p.breed ?? p.colorPattern ?? `Pet ID: ${p.id}`}
+                  </AppText>
+                </View>
+
+                {selected ? <AppText style={styles.modalCheck}>✓</AppText> : null}
+              </TouchableOpacity>
+            );
+          })}
+
+          <TouchableOpacity
+            style={styles.modalClose}
+            onPress={() => setPetModalOpen(false)}
+            activeOpacity={0.85}
+          >
+            <AppText style={styles.modalCloseText}>Close</AppText>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -442,6 +592,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   petLeft: { flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1 },
+
   petAvatar: {
     width: 52,
     height: 52,
@@ -449,7 +600,17 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.12)",
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
+  petAvatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 18,
+  },
+  petAvatarFallback: {
+    fontSize: 18,
+  },
+
   petNameText: { ...typography.subheading, color: "#2b4b1f" },
   petSubText: { ...typography.body, color: "rgba(0,0,0,0.55)", marginTop: 2 },
   chevron: { fontSize: 20, color: "rgba(0,0,0,0.55)", marginLeft: spacing.sm },
@@ -462,6 +623,31 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   map: { flex: 1 },
+
+  mapPetMarkerWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 3,
+    borderColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 3,
+  },
+  mapPetMarkerInside: {
+    backgroundColor: "#2E7D32",
+  },
+  mapPetMarkerOutside: {
+    backgroundColor: "#C62828",
+  },
+  mapPetMarkerImage: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  mapPetMarkerFallback: {
+    fontSize: 20,
+  },
 
   mapPill: {
     position: "absolute",
@@ -522,4 +708,52 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.15)",
   },
   homeMarkerText: { fontSize: 18 },
+
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
+  modalSheet: {
+    backgroundColor: "#fff",
+    padding: spacing.md,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+  },
+  modalTitle: { color: "#111", marginBottom: spacing.sm },
+
+  modalItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.03)",
+    marginBottom: spacing.sm,
+  },
+  modalItemSelected: { backgroundColor: "rgba(94, 143, 60, 0.12)" },
+
+  modalAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "rgba(244, 211, 94, 0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  modalAvatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 14,
+  },
+  modalAvatarText: { fontSize: 18 },
+  modalName: { ...typography.subheading, color: "#111" },
+  modalSub: { ...typography.body, color: "rgba(0,0,0,0.55)", marginTop: 2 },
+  modalCheck: { fontSize: 18, fontWeight: "900", color: GREEN },
+
+  modalClose: {
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.06)",
+    marginTop: spacing.sm,
+  },
+  modalCloseText: { ...typography.subheading, color: "#111" },
 });

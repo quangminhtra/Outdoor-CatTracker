@@ -6,13 +6,14 @@ import {
   TouchableOpacity,
   Modal,
   Pressable,
-  Switch
+  Switch,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import {collection,doc,onSnapshot,orderBy,query,updateDoc} from "firebase/firestore";
+import { collection, doc, onSnapshot, orderBy, query, updateDoc } from "firebase/firestore";
 
 import { auth, db } from "../../config/firebase";
-import { colors, spacing, typography } from "../../theme";
+import { spacing, typography } from "../../theme";
 import AppText from "../../components/ui/AppText";
 
 type PetOption = {
@@ -20,15 +21,14 @@ type PetOption = {
   name: string;
   breed?: string;
   colorPattern?: string;
-  avatarUrl?: string; // future
- prefs?: {
-  notifyExit?: boolean;
-  notifyReturn?: boolean;
-  masterEnabled?: boolean;
-  lastNotifyExit?: boolean;
-  lastNotifyReturn?: boolean;
-};
-
+  avatarBase64?: string;
+  prefs?: {
+    notifyExit?: boolean;
+    notifyReturn?: boolean;
+    masterEnabled?: boolean;
+    lastNotifyExit?: boolean;
+    lastNotifyReturn?: boolean;
+  };
 };
 
 type AlertDoc = {
@@ -37,14 +37,12 @@ type AlertDoc = {
   message: string;
   actionTip?: string;
   timestampMs?: number;
-  timestamp?: number; // keep temporary backward compatibility for older alerts
+  timestamp?: number; // backward compatibility
 };
 
 export default function AlertsScreen() {
-  // Local state
   const [activePetPrefs, setActivePetPrefs] = useState<PetOption["prefs"] | null>(null);
 
-  // Auth + user ID
   const uid = auth.currentUser?.uid;
 
   const [pets, setPets] = useState<PetOption[]>([]);
@@ -54,7 +52,6 @@ export default function AlertsScreen() {
   const [alerts, setAlerts] = useState<AlertDoc[]>([]);
   const [petModalOpen, setPetModalOpen] = useState(false);
 
-  // local UI toggle (derived from pet prefs)
   const [notifEnabled, setNotifEnabled] = useState(true);
 
   // 1) user doc -> activePetId
@@ -70,7 +67,6 @@ export default function AlertsScreen() {
     return () => unsub();
   }, [uid]);
 
-
   // 2) pets list
   useEffect(() => {
     if (!uid) return;
@@ -85,14 +81,14 @@ export default function AlertsScreen() {
           breed: typeof data?.breed === "string" ? data.breed : undefined,
           colorPattern:
             typeof data?.colorPattern === "string" ? data.colorPattern : undefined,
-          avatarUrl: typeof data?.avatarUrl === "string" ? data.avatarUrl : undefined,
-          prefs: data?.prefs
+          avatarBase64:
+            typeof data?.avatarBase64 === "string" ? data.avatarBase64 : undefined,
+          prefs: data?.prefs,
         };
       });
 
       setPets(list);
 
-      // if no active pet, set first
       if (!activePetId && list.length > 0) {
         updateDoc(doc(db, "users", uid), { activePetId: list[0].id });
       }
@@ -101,54 +97,52 @@ export default function AlertsScreen() {
     return () => unsub();
   }, [uid, activePetId]);
 
- // 3) resolve activePet from list (UI info only)
-useEffect(() => {
-  if (!activePetId) {
-    setActivePet(null);
-    return;
-  }
+  // 3) resolve activePet from list
+  useEffect(() => {
+    if (!activePetId) {
+      setActivePet(null);
+      return;
+    }
 
-  const found = pets.find((p) => p.id === activePetId) ?? null;
-  setActivePet(found);
-}, [pets, activePetId]);
+    const found = pets.find((p) => p.id === activePetId) ?? null;
+    setActivePet(found);
+  }, [pets, activePetId]);
 
- // 3.5) Listen to active pet doc for authoritative prefs 
-useEffect(() => {
-  if (!uid || !activePetId) {
-    setActivePetPrefs(null);
-    return;
-  }
-
-  const petRef = doc(db, "users", uid, "pets", activePetId);
-  const unsub = onSnapshot(petRef, (snap) => {
-    const data = snap.data() as any;
-    const p = data?.prefs;
-
-    if (!p) {
+  // 3.5) authoritative prefs from active pet
+  useEffect(() => {
+    if (!uid || !activePetId) {
       setActivePetPrefs(null);
       return;
     }
 
-    setActivePetPrefs({
-      notifyExit: typeof p.notifyExit === "boolean" ? p.notifyExit : undefined,
-      notifyReturn: typeof p.notifyReturn === "boolean" ? p.notifyReturn : undefined,
-      masterEnabled: typeof p.masterEnabled === "boolean" ? p.masterEnabled : undefined,
-      lastNotifyExit: typeof p.lastNotifyExit === "boolean" ? p.lastNotifyExit : undefined,
-      lastNotifyReturn: typeof p.lastNotifyReturn === "boolean" ? p.lastNotifyReturn : undefined
+    const petRef = doc(db, "users", uid, "pets", activePetId);
+    const unsub = onSnapshot(petRef, (snap) => {
+      const data = snap.data() as any;
+      const p = data?.prefs;
+
+      if (!p) {
+        setActivePetPrefs(null);
+        return;
+      }
+
+      setActivePetPrefs({
+        notifyExit: typeof p.notifyExit === "boolean" ? p.notifyExit : undefined,
+        notifyReturn: typeof p.notifyReturn === "boolean" ? p.notifyReturn : undefined,
+        masterEnabled: typeof p.masterEnabled === "boolean" ? p.masterEnabled : undefined,
+        lastNotifyExit: typeof p.lastNotifyExit === "boolean" ? p.lastNotifyExit : undefined,
+        lastNotifyReturn: typeof p.lastNotifyReturn === "boolean" ? p.lastNotifyReturn : undefined,
+      });
     });
-  });
 
-  return () => unsub();
-}, [uid, activePetId]);
+    return () => unsub();
+  }, [uid, activePetId]);
 
-
-// 3.8) sync master switch from authoritative prefs
-useEffect(() => {
-  const exitOn = !!activePetPrefs?.notifyExit;
-  const returnOn = !!activePetPrefs?.notifyReturn;
-  setNotifEnabled(exitOn || returnOn);
-}, [activePetPrefs]);
-
+  // 3.8) sync master toggle
+  useEffect(() => {
+    const exitOn = !!activePetPrefs?.notifyExit;
+    const returnOn = !!activePetPrefs?.notifyReturn;
+    setNotifEnabled(exitOn || returnOn);
+  }, [activePetPrefs]);
 
   // 4) alerts for active pet
   useEffect(() => {
@@ -172,9 +166,8 @@ useEffect(() => {
   }, [uid, activePetId]);
 
   const headerTitle = useMemo(() => {
-    if (!activePet) return "Alerts";
-    return `Alerts`;
-  }, [activePet]);
+    return "Alerts";
+  }, []);
 
   const headerSubtitle = useMemo(() => {
     if (!activePet) return "Select a pet";
@@ -187,65 +180,79 @@ useEffect(() => {
     setPetModalOpen(false);
   }
 
-  // Toggle = convenience switch that controls BOTH notifyExit + notifyReturn for this pet
-async function toggleNotifications(enabled: boolean) {
-  if (!uid || !activePetId) return;
+  async function toggleNotifications(enabled: boolean) {
+    if (!uid || !activePetId) return;
 
-  const petRef = doc(db, "users", uid, "pets", activePetId);
+    const petRef = doc(db, "users", uid, "pets", activePetId);
 
-  // current values from authoritative prefs (fallback to true)
-  const curExit = typeof activePetPrefs?.notifyExit === "boolean" ? activePetPrefs.notifyExit : true;
-  const curReturn =
-    typeof activePetPrefs?.notifyReturn === "boolean" ? activePetPrefs.notifyReturn : true;
+    const curExit =
+      typeof activePetPrefs?.notifyExit === "boolean" ? activePetPrefs.notifyExit : true;
+    const curReturn =
+      typeof activePetPrefs?.notifyReturn === "boolean" ? activePetPrefs.notifyReturn : true;
 
-  // restore values (fallback to true)
-  const restoreExit =
-    typeof activePetPrefs?.lastNotifyExit === "boolean" ? activePetPrefs.lastNotifyExit : true;
-  const restoreReturn =
-    typeof activePetPrefs?.lastNotifyReturn === "boolean" ? activePetPrefs.lastNotifyReturn : true;
+    const restoreExit =
+      typeof activePetPrefs?.lastNotifyExit === "boolean"
+        ? activePetPrefs.lastNotifyExit
+        : true;
+    const restoreReturn =
+      typeof activePetPrefs?.lastNotifyReturn === "boolean"
+        ? activePetPrefs.lastNotifyReturn
+        : true;
 
-  setNotifEnabled(enabled);
+    setNotifEnabled(enabled);
 
-  if (!enabled) {
-    // backup then disable both
+    if (!enabled) {
+      await updateDoc(petRef, {
+        "prefs.masterEnabled": false,
+        "prefs.lastNotifyExit": curExit,
+        "prefs.lastNotifyReturn": curReturn,
+        "prefs.notifyExit": false,
+        "prefs.notifyReturn": false,
+      });
+      return;
+    }
+
     await updateDoc(petRef, {
-      "prefs.masterEnabled": false,
-      "prefs.lastNotifyExit": curExit,
-      "prefs.lastNotifyReturn": curReturn,
-      "prefs.notifyExit": false,
-      "prefs.notifyReturn": false
+      "prefs.masterEnabled": true,
+      "prefs.notifyExit": restoreExit,
+      "prefs.notifyReturn": restoreReturn,
     });
-    return;
   }
-
-  // restore last or default true
-  await updateDoc(petRef, {
-    "prefs.masterEnabled": true,
-    "prefs.notifyExit": restoreExit,
-    "prefs.notifyReturn": restoreReturn
-  });
-}
 
   function getAlertVisual(type: AlertDoc["type"]) {
     if (type === "GEOFENCE_EXIT") {
-      return { label: "Left safe zone", icon: "⚠️", badgeBg: "rgba(198,40,40,0.15)", badgeText: "#C62828" };
+      return {
+        label: "Left safe zone",
+        icon: "⚠️",
+        badgeBg: "rgba(198,40,40,0.15)",
+        badgeText: "#C62828",
+      };
     }
     if (type === "GEOFENCE_RETURN") {
-      return { label: "Back safe", icon: "🏠", badgeBg: "rgba(46,125,50,0.15)", badgeText: "#2E7D32" };
+      return {
+        label: "Back safe",
+        icon: "🏠",
+        badgeBg: "rgba(46,125,50,0.15)",
+        badgeText: "#2E7D32",
+      };
     }
-    return { label: type, icon: "🔔", badgeBg: "rgba(0,0,0,0.08)", badgeText: "rgba(0,0,0,0.7)" };
+    return {
+      label: type,
+      icon: "🔔",
+      badgeBg: "rgba(0,0,0,0.08)",
+      badgeText: "rgba(0,0,0,0.7)",
+    };
   }
 
   const renderItem = ({ item }: { item: AlertDoc }) => {
     const rawTime =
-    typeof item.timestampMs === "number"
-      ? item.timestampMs
-      : typeof item.timestamp === "number"
-      ? item.timestamp * 1000
-      : null;
+      typeof item.timestampMs === "number"
+        ? item.timestampMs
+        : typeof item.timestamp === "number"
+        ? item.timestamp * 1000
+        : null;
 
-const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
-
+    const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
     const visual = getAlertVisual(item.type);
 
     return (
@@ -264,7 +271,11 @@ const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
 
           <View style={[styles.badge, { backgroundColor: visual.badgeBg }]}>
             <AppText style={[styles.badgeText, { color: visual.badgeText }]}>
-              {item.type === "GEOFENCE_EXIT" ? "EXIT" : item.type === "GEOFENCE_RETURN" ? "RETURN" : "INFO"}
+              {item.type === "GEOFENCE_EXIT"
+                ? "EXIT"
+                : item.type === "GEOFENCE_RETURN"
+                ? "RETURN"
+                : "INFO"}
             </AppText>
           </View>
         </View>
@@ -291,7 +302,6 @@ const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      {/* Green header (safe-area safe) */}
       <View style={styles.header}>
         <AppText variant="heading" style={styles.headerTitle}>
           {headerTitle}
@@ -300,7 +310,6 @@ const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
       </View>
 
       <View style={styles.content}>
-        {/* Pet dropdown card (Figma-style) */}
         <TouchableOpacity
           style={styles.petCard}
           activeOpacity={0.85}
@@ -309,7 +318,11 @@ const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
         >
           <View style={styles.petLeft}>
             <View style={styles.avatar}>
-              <AppText style={styles.avatarText}>🐾</AppText>
+              {activePet?.avatarBase64 ? (
+                <Image source={{ uri: activePet.avatarBase64 }} style={styles.avatarImage} />
+              ) : (
+                <AppText style={styles.avatarText}>🐾</AppText>
+              )}
             </View>
 
             <View style={{ flex: 1 }}>
@@ -325,7 +338,6 @@ const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
           <AppText style={styles.chevron}>⌄</AppText>
         </TouchableOpacity>
 
-        {/* Enable notifications row (wired to Firestore pet prefs) */}
         <View style={styles.whiteRow}>
           <View style={{ flex: 1 }}>
             <AppText style={styles.whiteRowTitle}>Enable Notifications</AppText>
@@ -334,10 +346,7 @@ const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
             </AppText>
           </View>
 
-          <Switch
-            value={notifEnabled}
-            onValueChange={toggleNotifications}
-          />
+          <Switch value={notifEnabled} onValueChange={toggleNotifications} />
         </View>
 
         <AppText variant="heading" style={styles.sectionTitle}>
@@ -362,7 +371,6 @@ const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
         )}
       </View>
 
-      {/* Pet selection modal */}
       <Modal
         transparent
         visible={petModalOpen}
@@ -385,7 +393,11 @@ const timeText = rawTime ? new Date(rawTime).toLocaleString() : "—";
                 activeOpacity={0.85}
               >
                 <View style={styles.modalAvatar}>
-                  <AppText style={styles.modalAvatarText}>🐱</AppText>
+                  {p.avatarBase64 ? (
+                    <Image source={{ uri: p.avatarBase64 }} style={styles.modalAvatarImage} />
+                  ) : (
+                    <AppText style={styles.modalAvatarText}>🐱</AppText>
+                  )}
                 </View>
 
                 <View style={{ flex: 1 }}>
@@ -424,15 +436,19 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.25)"
+    borderBottomColor: "rgba(255,255,255,0.25)",
   },
-  headerTitle: { color: "#fff" }, // uses AppText heading sizing
+  headerTitle: { color: "#fff" },
   headerSubtitle: { color: "rgba(255,255,255,0.9)", marginTop: 2 },
 
   content: { flex: 1, padding: spacing.md },
 
   h1: { color: "#fff" },
-  subtle: { ...typography.body, color: "rgba(255,255,255,0.85)", marginTop: spacing.sm },
+  subtle: {
+    ...typography.body,
+    color: "rgba(255,255,255,0.85)",
+    marginTop: spacing.sm,
+  },
 
   petCard: {
     backgroundColor: YELLOW,
@@ -441,16 +457,27 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: spacing.md
+    marginBottom: spacing.md,
   },
-  petLeft: { flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1 },
+  petLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    flex: 1,
+  },
   avatar: {
     width: 54,
     height: 54,
     borderRadius: 18,
     backgroundColor: "rgba(0,0,0,0.10)",
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 18,
   },
   avatarText: { fontSize: 20 },
   petName: { ...typography.subheading, color: "#2b4b1f" },
@@ -464,7 +491,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: spacing.md
+    marginBottom: spacing.md,
   },
   whiteRowTitle: { ...typography.subheading, color: "#111" },
   whiteRowSub: { ...typography.body, color: "rgba(0,0,0,0.6)", marginTop: 2 },
@@ -476,13 +503,13 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: spacing.md,
     borderWidth: 2,
-    borderColor: "rgba(0,0,0,0.05)"
+    borderColor: "rgba(0,0,0,0.05)",
   },
   alertTopRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: spacing.sm
+    marginBottom: spacing.sm,
   },
   alertLeft: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flex: 1 },
 
@@ -491,14 +518,14 @@ const styles = StyleSheet.create({
     height: 38,
     borderRadius: 14,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
   },
   iconText: { fontSize: 18 },
 
   badge: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 999
+    borderRadius: 999,
   },
   badgeText: { ...typography.body, fontWeight: "800" },
 
@@ -508,13 +535,12 @@ const styles = StyleSheet.create({
   alertMessage: { ...typography.body, color: "#111", marginTop: 2 },
   alertTip: { ...typography.body, color: "rgba(0,0,0,0.6)", marginTop: spacing.xs },
 
-  // Modal
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
   modalSheet: {
     backgroundColor: "#fff",
     padding: spacing.md,
     borderTopLeftRadius: 18,
-    borderTopRightRadius: 18
+    borderTopRightRadius: 18,
   },
   modalTitle: { color: "#111", marginBottom: spacing.sm },
 
@@ -525,7 +551,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: 14,
     backgroundColor: "rgba(0,0,0,0.03)",
-    marginBottom: spacing.sm
+    marginBottom: spacing.sm,
   },
   modalItemSelected: { backgroundColor: "rgba(94, 143, 60, 0.12)" },
 
@@ -535,7 +561,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: "rgba(244, 211, 94, 0.55)",
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  modalAvatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 14,
   },
   modalAvatarText: { fontSize: 18 },
   modalName: { ...typography.subheading, color: "#111" },
@@ -547,7 +579,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: "center",
     backgroundColor: "rgba(0,0,0,0.06)",
-    marginTop: spacing.sm
+    marginTop: spacing.sm,
   },
-  modalCloseText: { ...typography.subheading, color: "#111" }
+  modalCloseText: { ...typography.subheading, color: "#111" },
 });

@@ -6,73 +6,91 @@ import {
   Alert,
   TouchableOpacity,
   Image,
+  TextInput,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import * as ImagePicker from "expo-image-picker";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
-import { auth, db, storage } from "../../config/firebase";
+import { auth, db } from "../../config/firebase";
 import { spacing } from "../../theme";
 import AppText from "../../components/ui/AppText";
 import Button from "../../components/ui/Button";
 import ScreenHeader from "../../components/ui/ScreenHeader";
 
-async function uriToBlob(uri: string): Promise<Blob> {
-  const response = await fetch(uri);
-  return await response.blob();
-}
+type PetDoc = {
+  name?: string;
+  breed?: string;
+  colorPattern?: string;
+  deviceId?: string;
+  avatarBase64?: string;
+  geofence?: {
+    center?: { lat?: number; lng?: number };
+    radiusMeters?: number;
+  };
+};
 
 export default function PetDetailsScreen({ route, navigation }: any) {
   const uid = auth.currentUser?.uid;
   const { petId } = route.params as { petId: string };
 
-  const [pet, setPet] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const [name, setName] = useState("");
+  const [breed, setBreed] = useState("");
+  const [colorPattern, setColorPattern] = useState("");
+  const [deviceId, setDeviceId] = useState("");
+  const [avatarBase64, setAvatarBase64] = useState("");
+
+  const [geofenceText, setGeofenceText] = useState("—");
 
   useEffect(() => {
     if (!uid) return;
 
     const refDoc = doc(db, "users", uid, "pets", petId);
     const unsub = onSnapshot(refDoc, (snap) => {
-      setPet(snap.data() ?? null);
+      const data = (snap.data() as PetDoc) ?? {};
+
+      setName(typeof data.name === "string" ? data.name : "");
+      setBreed(typeof data.breed === "string" ? data.breed : "");
+      setColorPattern(typeof data.colorPattern === "string" ? data.colorPattern : "");
+      setDeviceId(typeof data.deviceId === "string" ? data.deviceId : "");
+      setAvatarBase64(typeof data.avatarBase64 === "string" ? data.avatarBase64 : "");
+
+      const lat = data.geofence?.center?.lat;
+      const lng = data.geofence?.center?.lng;
+      const radius = data.geofence?.radiusMeters;
+
+      if (
+        typeof lat === "number" &&
+        typeof lng === "number" &&
+        typeof radius === "number"
+      ) {
+        setGeofenceText(`${lat.toFixed(5)}, ${lng.toFixed(5)} | ${Math.round(radius)}m`);
+      } else {
+        setGeofenceText("—");
+      }
+
       setLoading(false);
     });
 
     return () => unsub();
   }, [uid, petId]);
 
-  const geofenceText = useMemo(() => {
-    const gf = pet?.geofence;
-    if (!gf?.center) return "—";
-    const r = typeof gf.radiusMeters === "number" ? gf.radiusMeters : 0;
-    return `${gf.center.lat.toFixed(5)}, ${gf.center.lng.toFixed(5)} | ${Math.round(r)}m`;
-  }, [pet]);
-
-  async function setAsActive() {
-    if (!uid) return;
-    await updateDoc(doc(db, "users", uid), { activePetId: petId });
-    Alert.alert("Active Pet Updated", `${pet?.name || "This pet"} is now active.`);
-  }
-
-  function openGeofencePicker() {
-    const gf = pet?.geofence;
-
-    navigation.navigate("GeofencePicker", {
-      petId,
-      center: gf?.center ?? { lat: 43.6577, lng: -79.3792 },
-      radiusMeters: gf?.radiusMeters ?? 120,
-    });
-  }
+  const displayName = useMemo(() => {
+    const trimmed = name.trim();
+    return trimmed || "Pet";
+  }, [name]);
 
   async function handleChangeAvatar() {
-    if (!uid) return;
-
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
       if (!permission.granted) {
-        Alert.alert("Permission Required", "Please allow photo library access.");
+        Alert.alert("Permission Required", "Please allow photo access first.");
         return;
       }
 
@@ -80,37 +98,89 @@ export default function PetDetailsScreen({ route, navigation }: any) {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: 0.6,
+        base64: true,
       });
 
-      if (result.canceled || !result.assets?.length) return;
+      if (result.canceled) return;
+
+      const pickedBase64 = result.assets?.[0]?.base64;
+      if (!pickedBase64) {
+        Alert.alert("Error", "Could not read selected image.");
+        return;
+      }
+
+      const imageData = `data:image/jpeg;base64,${pickedBase64}`;
 
       setUploadingAvatar(true);
 
-      const localUri = result.assets[0].uri;
-      const blob = await uriToBlob(localUri);
+      if (uid) {
+        await updateDoc(doc(db, "users", uid, "pets", petId), {
+          avatarBase64: imageData,
+        });
+      }
 
-      const avatarRef = ref(storage, `pet-avatars/${uid}/${petId}.jpg`);
-      await uploadBytes(avatarRef, blob, { contentType: "image/jpeg" });
-
-      const avatarUrl = await getDownloadURL(avatarRef);
-
-      await updateDoc(doc(db, "users", uid, "pets", petId), {
-        avatarUrl,
-      });
-
-      Alert.alert("Success", "Pet photo updated.");
-    } catch (err: any) {
-      Alert.alert("Upload Failed", err?.message ?? "Please try again.");
+      setAvatarBase64(imageData);
+    } catch (err) {
+      console.log("Avatar update failed", err);
+      Alert.alert("Error", "Could not update pet avatar.");
     } finally {
       setUploadingAvatar(false);
     }
   }
 
+  async function savePetDetails() {
+    if (!uid) return;
+
+    const trimmedName = name.trim();
+    const trimmedBreed = breed.trim();
+    const trimmedColorPattern = colorPattern.trim();
+    const trimmedDeviceId = deviceId.trim();
+
+    if (!trimmedName) {
+      Alert.alert("Missing Name", "Please enter a pet name.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      await updateDoc(doc(db, "users", uid, "pets", petId), {
+        name: trimmedName,
+        breed: trimmedBreed,
+        colorPattern: trimmedColorPattern,
+        deviceId: trimmedDeviceId,
+      });
+
+      Alert.alert("Saved", "Pet profile updated.");
+    } catch (err) {
+      console.log("Save pet failed", err);
+      Alert.alert("Error", "Could not save pet changes.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setAsActive() {
+    if (!uid) return;
+
+    try {
+      await updateDoc(doc(db, "users", uid), { activePetId: petId });
+      Alert.alert("Active Pet Updated", `${displayName} is now active.`);
+    } catch (err) {
+      console.log("Set active pet failed", err);
+      Alert.alert("Error", "Could not set this pet as active.");
+    }
+  }
+
+  function openGeofencePicker() {
+    navigation.navigate("GeofencePicker", { petId });
+  }
+
   if (!uid) {
     return (
       <View style={styles.page}>
-        <ScreenHeader title="Pet" onBack={() => navigation.goBack()} />
+        <ScreenHeader title="Pet Profile" onBack={() => navigation.goBack()} />
         <View style={styles.center}>
           <AppText variant="subheading" style={{ color: "#111" }}>
             Not logged in
@@ -125,28 +195,41 @@ export default function PetDetailsScreen({ route, navigation }: any) {
       <ScreenHeader title="Pet Profile" onBack={() => navigation.goBack()} />
 
       <SafeAreaView edges={["bottom"]} style={styles.contentSafe}>
-        <View style={styles.container}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+        >
           {loading ? (
             <View style={styles.center}>
               <ActivityIndicator />
-              <AppText style={styles.muted}>(Loading pet…)</AppText>
-            </View>
-          ) : !pet ? (
-            <View style={styles.center}>
-              <AppText variant="subheading" style={{ color: "#111" }}>
-                Pet not found
-              </AppText>
+              <AppText style={styles.muted}>Loading pet…</AppText>
             </View>
           ) : (
             <>
               <View style={styles.avatarSection}>
-                {pet.avatarUrl ? (
-                  <Image source={{ uri: pet.avatarUrl }} style={styles.avatarImage} />
-                ) : (
-                  <View style={styles.avatarFallback}>
-                    <AppText style={styles.avatarFallbackText}>🐱</AppText>
-                  </View>
-                )}
+                <TouchableOpacity
+                  onPress={handleChangeAvatar}
+                  activeOpacity={0.85}
+                  style={styles.avatarTouchable}
+                  disabled={uploadingAvatar}
+                >
+                  {avatarBase64 ? (
+                    <Image source={{ uri: avatarBase64 }} style={styles.avatarImage} />
+                  ) : (
+                    <View style={styles.avatarFallback}>
+                      <AppText style={styles.avatarFallbackText}>🐱</AppText>
+                    </View>
+                  )}
+
+                  {uploadingAvatar ? (
+                    <View style={styles.avatarOverlay}>
+                      <ActivityIndicator color="#fff" />
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
+
+                <AppText style={styles.petTitle}>{displayName}</AppText>
 
                 <TouchableOpacity
                   style={styles.avatarButton}
@@ -157,31 +240,71 @@ export default function PetDetailsScreen({ route, navigation }: any) {
                   <AppText style={styles.avatarButtonText}>
                     {uploadingAvatar
                       ? "Uploading..."
-                      : pet.avatarUrl
+                      : avatarBase64
                       ? "Change Photo"
                       : "Add Photo"}
                   </AppText>
                 </TouchableOpacity>
               </View>
 
-              <AppText variant="heading" style={styles.title}>
-                {pet.name || "Pet"}
-              </AppText>
+              <View style={styles.card}>
+                <AppText style={styles.label}>Name</AppText>
+                <TextInput
+                  value={name}
+                  onChangeText={setName}
+                  style={styles.input}
+                  placeholder="Whiskers"
+                  placeholderTextColor="rgba(0,0,0,0.35)"
+                />
+
+                <View style={{ height: spacing.md }} />
+
+                <AppText style={styles.label}>Breed</AppText>
+                <TextInput
+                  value={breed}
+                  onChangeText={setBreed}
+                  style={styles.input}
+                  placeholder="Breed"
+                  placeholderTextColor="rgba(0,0,0,0.35)"
+                />
+
+                <View style={{ height: spacing.md }} />
+
+                <AppText style={styles.label}>Color & Pattern</AppText>
+                <TextInput
+                  value={colorPattern}
+                  onChangeText={setColorPattern}
+                  style={styles.input}
+                  placeholder="e.g., Orange tabby"
+                  placeholderTextColor="rgba(0,0,0,0.35)"
+                />
+
+                <View style={{ height: spacing.md }} />
+
+                <AppText style={styles.label}>Device ID</AppText>
+                <TextInput
+                  value={deviceId}
+                  onChangeText={setDeviceId}
+                  style={styles.input}
+                  placeholder="GPS module ID"
+                  placeholderTextColor="rgba(0,0,0,0.35)"
+                  autoCapitalize="characters"
+                />
+              </View>
+
+              <View style={{ height: spacing.md }} />
 
               <View style={styles.card}>
-                <AppText style={styles.line}>Device ID: {pet.deviceId || "—"}</AppText>
-                <AppText style={styles.line}>Breed: {pet.breed || "—"}</AppText>
-                <AppText style={styles.line}>
-                  Color & Pattern: {pet.colorPattern || "—"}
-                </AppText>
-                <AppText style={styles.line}>Safe Zone: {geofenceText}</AppText>
+                <AppText style={styles.label}>Safe Zone</AppText>
+                <AppText style={styles.valueText}>{geofenceText}</AppText>
               </View>
 
               <View style={{ height: spacing.lg }} />
 
               <Button
-                title="Edit Pet"
-                onPress={() => navigation.navigate("EditPet", { petId })}
+                title={saving ? "Saving…" : "Save Changes"}
+                onPress={savePetDetails}
+                disabled={saving || uploadingAvatar}
               />
 
               <View style={{ height: spacing.sm }} />
@@ -194,14 +317,20 @@ export default function PetDetailsScreen({ route, navigation }: any) {
 
               <View style={{ height: spacing.sm }} />
 
-              <Button title="Set as Active Pet" variant="secondary" onPress={setAsActive} />
+              <Button
+                title="Set as Active Pet"
+                variant="secondary"
+                onPress={setAsActive}
+              />
             </>
           )}
-        </View>
+        </ScrollView>
       </SafeAreaView>
     </View>
   );
 }
+
+const GREEN = "#5E8F3C";
 
 const styles = StyleSheet.create({
   page: {
@@ -211,16 +340,21 @@ const styles = StyleSheet.create({
   contentSafe: {
     flex: 1,
   },
-  container: {
+  scroll: {
     flex: 1,
     backgroundColor: "#fff",
+  },
+  container: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
   },
+
   center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    minHeight: 250,
   },
   muted: {
     marginTop: spacing.sm,
@@ -229,7 +363,10 @@ const styles = StyleSheet.create({
 
   avatarSection: {
     alignItems: "center",
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  avatarTouchable: {
+    position: "relative",
   },
   avatarImage: {
     width: 120,
@@ -247,9 +384,26 @@ const styles = StyleSheet.create({
   avatarFallbackText: {
     fontSize: 42,
   },
+  avatarOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  petTitle: {
+    marginTop: spacing.sm,
+    fontSize: 22,
+    fontWeight: "900",
+    color: "#111",
+  },
   avatarButton: {
     marginTop: spacing.sm,
-    backgroundColor: "#5E8F3C",
+    backgroundColor: GREEN,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -257,12 +411,6 @@ const styles = StyleSheet.create({
   avatarButtonText: {
     color: "#fff",
     fontWeight: "800",
-  },
-
-  title: {
-    color: "#111",
-    marginBottom: spacing.md,
-    textAlign: "center",
   },
 
   card: {
@@ -276,8 +424,21 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 3,
   },
-  line: {
+  label: {
     color: "#111",
+    fontWeight: "800",
     marginBottom: spacing.sm,
+  },
+  valueText: {
+    color: "#111",
+  },
+  input: {
+    backgroundColor: "rgba(0,0,0,0.05)",
+    borderRadius: 14,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    color: "#111",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
   },
 });

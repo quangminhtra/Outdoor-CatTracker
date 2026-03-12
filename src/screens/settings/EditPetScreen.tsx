@@ -8,21 +8,15 @@ import {
   Image,
   Alert,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
-import * as ImagePicker from "expo-image-picker";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
-import { auth, db, storage } from "../../config/firebase";
+import { auth, db } from "../../config/firebase";
 import { spacing } from "../../theme";
 import AppText from "../../components/ui/AppText";
 import Button from "../../components/ui/Button";
 import ScreenHeader from "../../components/ui/ScreenHeader";
-
-async function uriToBlob(uri: string): Promise<Blob> {
-  const response = await fetch(uri);
-  return await response.blob();
-}
 
 export default function EditPetScreen({ route, navigation }: any) {
   const uid = auth.currentUser?.uid;
@@ -36,35 +30,43 @@ export default function EditPetScreen({ route, navigation }: any) {
   const [breed, setBreed] = useState("");
   const [colorPattern, setColorPattern] = useState("");
   const [deviceId, setDeviceId] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarBase64, setAvatarBase64] = useState<string>("");
 
   useEffect(() => {
     async function load() {
       if (!uid) return;
 
-      const snap = await getDoc(doc(db, "users", uid, "pets", petId));
-      const data = snap.data() as any;
+      try {
+        const snap = await getDoc(doc(db, "users", uid, "pets", petId));
+        const data = snap.data() as any;
 
-      if (data) {
-        setName(typeof data.name === "string" ? data.name : "");
-        setBreed(typeof data.breed === "string" ? data.breed : "");
-        setColorPattern(typeof data.colorPattern === "string" ? data.colorPattern : "");
-        setDeviceId(typeof data.deviceId === "string" ? data.deviceId : "");
-        setAvatarUrl(typeof data.avatarUrl === "string" ? data.avatarUrl : "");
+        if (data) {
+          setName(typeof data.name === "string" ? data.name : "");
+          setBreed(typeof data.breed === "string" ? data.breed : "");
+          setColorPattern(typeof data.colorPattern === "string" ? data.colorPattern : "");
+          setDeviceId(typeof data.deviceId === "string" ? data.deviceId : "");
+          setAvatarBase64(
+            typeof data.avatarBase64 === "string" ? data.avatarBase64 : ""
+          );
+        }
+      } catch (err) {
+        console.log("Load pet failed", err);
+        Alert.alert("Error", "Could not load pet details.");
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
+
     load();
   }, [uid, petId]);
 
   async function handleChangeAvatar() {
-    if (!uid) return;
-
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+
       if (!permission.granted) {
-        Alert.alert("Permission Required", "Please allow photo library access.");
+        Alert.alert("Permission Required", "Please allow photo access first.");
         return;
       }
 
@@ -72,29 +74,32 @@ export default function EditPetScreen({ route, navigation }: any) {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: 0.6,
+        base64: true,
       });
 
-      if (result.canceled || !result.assets?.length) return;
+      if (result.canceled) return;
+
+      const pickedBase64 = result.assets?.[0]?.base64;
+      if (!pickedBase64) {
+        Alert.alert("Error", "Could not read selected image.");
+        return;
+      }
+
+      const imageData = `data:image/jpeg;base64,${pickedBase64}`;
 
       setUploadingAvatar(true);
 
-      const localUri = result.assets[0].uri;
-      const blob = await uriToBlob(localUri);
+      if (uid) {
+        await updateDoc(doc(db, "users", uid, "pets", petId), {
+          avatarBase64: imageData,
+        });
+      }
 
-      const avatarRef = ref(storage, `pet-avatars/${uid}/${petId}.jpg`);
-      await uploadBytes(avatarRef, blob, { contentType: "image/jpeg" });
-
-      const downloadUrl = await getDownloadURL(avatarRef);
-
-      await updateDoc(doc(db, "users", uid, "pets", petId), {
-        avatarUrl: downloadUrl,
-      });
-
-      setAvatarUrl(downloadUrl);
-      Alert.alert("Success", "Pet photo updated.");
-    } catch (err: any) {
-      Alert.alert("Upload Failed", err?.message ?? "Please try again.");
+      setAvatarBase64(imageData);
+    } catch (err) {
+      console.log("Avatar update failed", err);
+      Alert.alert("Error", "Could not update pet avatar.");
     } finally {
       setUploadingAvatar(false);
     }
@@ -103,17 +108,33 @@ export default function EditPetScreen({ route, navigation }: any) {
   async function save() {
     if (!uid) return;
 
-    setSaving(true);
+    const trimmedName = name.trim();
+    const trimmedBreed = breed.trim();
+    const trimmedColorPattern = colorPattern.trim();
+    const trimmedDeviceId = deviceId.trim();
 
-    await updateDoc(doc(db, "users", uid, "pets", petId), {
-      name: name.trim(),
-      breed: breed.trim(),
-      colorPattern: colorPattern.trim(),
-      deviceId: deviceId.trim(),
-    });
+    if (!trimmedName) {
+      Alert.alert("Missing Name", "Please enter a pet name.");
+      return;
+    }
 
-    setSaving(false);
-    navigation.goBack();
+    try {
+      setSaving(true);
+
+      await updateDoc(doc(db, "users", uid, "pets", petId), {
+        name: trimmedName,
+        breed: trimmedBreed,
+        colorPattern: trimmedColorPattern,
+        deviceId: trimmedDeviceId,
+      });
+
+      navigation.goBack();
+    } catch (err) {
+      console.log("Save pet failed", err);
+      Alert.alert("Error", "Could not save pet changes.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (!uid) {
@@ -138,18 +159,34 @@ export default function EditPetScreen({ route, navigation }: any) {
           {loading ? (
             <View style={styles.center}>
               <ActivityIndicator />
-              <AppText style={styles.muted}>(Loading…)</AppText>
+              <AppText style={styles.muted}>Loading…</AppText>
             </View>
           ) : (
             <>
               <View style={styles.avatarSection}>
-                {avatarUrl ? (
-                  <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
-                ) : (
-                  <View style={styles.avatarFallback}>
-                    <AppText style={styles.avatarFallbackText}>🐱</AppText>
-                  </View>
-                )}
+                <TouchableOpacity
+                  onPress={handleChangeAvatar}
+                  activeOpacity={0.85}
+                  style={styles.avatarTouchable}
+                  disabled={uploadingAvatar}
+                >
+                  {avatarBase64 ? (
+                    <Image
+                      source={{ uri: avatarBase64 }}
+                      style={styles.avatarImage}
+                    />
+                  ) : (
+                    <View style={styles.avatarFallback}>
+                      <AppText style={styles.avatarFallbackText}>🐱</AppText>
+                    </View>
+                  )}
+
+                  {uploadingAvatar ? (
+                    <View style={styles.avatarOverlay}>
+                      <ActivityIndicator color="#fff" />
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.avatarButton}
@@ -160,7 +197,7 @@ export default function EditPetScreen({ route, navigation }: any) {
                   <AppText style={styles.avatarButtonText}>
                     {uploadingAvatar
                       ? "Uploading..."
-                      : avatarUrl
+                      : avatarBase64
                       ? "Change Photo"
                       : "Add Photo"}
                   </AppText>
@@ -217,7 +254,7 @@ export default function EditPetScreen({ route, navigation }: any) {
               <Button
                 title={saving ? "Saving…" : "Save your changes"}
                 onPress={save}
-                disabled={saving}
+                disabled={saving || uploadingAvatar}
               />
             </>
           )}
@@ -228,9 +265,13 @@ export default function EditPetScreen({ route, navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#fff" },
-  contentSafe: { flex: 1 },
-
+  page: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  contentSafe: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: "#fff",
@@ -238,12 +279,22 @@ const styles = StyleSheet.create({
     paddingTop: spacing.lg,
   },
 
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  muted: { marginTop: spacing.sm, color: "rgba(0,0,0,0.6)" },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  muted: {
+    marginTop: spacing.sm,
+    color: "rgba(0,0,0,0.6)",
+  },
 
   avatarSection: {
     alignItems: "center",
     marginBottom: spacing.lg,
+  },
+  avatarTouchable: {
+    position: "relative",
   },
   avatarImage: {
     width: 110,
@@ -260,6 +311,17 @@ const styles = StyleSheet.create({
   },
   avatarFallbackText: {
     fontSize: 40,
+  },
+  avatarOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   avatarButton: {
     marginTop: spacing.sm,

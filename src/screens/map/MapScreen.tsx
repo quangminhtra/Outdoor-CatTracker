@@ -6,6 +6,7 @@ import {
   Modal,
   Pressable,
   TouchableOpacity,
+  Image,
 } from "react-native";
 import MapView, { Marker, Circle, Region } from "react-native-maps";
 import {
@@ -117,16 +118,14 @@ export default function MapScreen() {
   const outsideMuteUntilRef = useRef<number | null>(null);
   const outsideFlowActiveRef = useRef(false);
   const outsidePromptShownRef = useRef(false);
-  
-  // 1) Added Refs
   const outsideAttemptCountRef = useRef(0);
   const outsideEpisodeDoneRef = useRef(false);
-
   const isInsideGeofenceRef = useRef<boolean | null>(null);
 
   const [activePetId, setActivePetId] = useState<string | null>(null);
   const [petName, setPetName] = useState<string>("—");
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [avatarBase64, setAvatarBase64] = useState<string>("");
 
   const [geofence, setGeofence] = useState<Geofence>({
     center: { lat: 43.6577, lng: -79.3792 },
@@ -153,6 +152,8 @@ export default function MapScreen() {
     OUTSIDE_MUTE_OPTIONS[2].valueMs
   );
 
+  const [trackMarkerViewChanges, setTrackMarkerViewChanges] = useState(true);
+
   const displayLocation = useMemo(
     () => catLocation ?? petLastLocation ?? null,
     [catLocation, petLastLocation]
@@ -171,6 +172,16 @@ export default function MapScreen() {
     isInsideGeofenceRef.current = isInsideGeofence;
   }, [isInsideGeofence]);
 
+  useEffect(() => {
+    setTrackMarkerViewChanges(true);
+
+    const timeout = setTimeout(() => {
+      setTrackMarkerViewChanges(false);
+    }, 1000);
+
+    return () => clearTimeout(timeout);
+  }, [avatarBase64, displayLocation]);
+
   const clearOutsideTimers = useCallback(() => {
     for (const timer of outsideTimersRef.current) {
       clearTimeout(timer);
@@ -178,7 +189,6 @@ export default function MapScreen() {
     outsideTimersRef.current = [];
   }, []);
 
-  // 2) Updated resetOutsideFlow
   const resetOutsideFlow = useCallback(() => {
     clearOutsideTimers();
     outsideFlowActiveRef.current = false;
@@ -200,7 +210,8 @@ export default function MapScreen() {
     [clearOutsideTimers]
   );
 
-  async function logAlert(type: "GEOFENCE_EXIT" | "GEOFENCE_RETURN") {
+const logAlert = useCallback(
+  async (type: "GEOFENCE_EXIT" | "GEOFENCE_RETURN") => {
     if (!uid || !activePetId) return;
 
     const alertsRef = collection(db, "users", uid, "pets", activePetId, "alerts");
@@ -240,9 +251,10 @@ export default function MapScreen() {
         await deleteDoc(docSnap.ref);
       }
     }
-  }
+  },
+  [uid, activePetId, petName]
+  );
 
-  // 3) Updated showOutsideMutePrompt
   const showOutsideMutePrompt = useCallback(() => {
     outsidePromptShownRef.current = true;
     setOutsideMuteModalVisible(true);
@@ -257,7 +269,6 @@ export default function MapScreen() {
     muteOutsideAlerts(selectedMuteMs);
   }, [muteOutsideAlerts, selectedMuteMs]);
 
-  // 4) Updated startOutsideAlertSequence
   const startOutsideAlertSequence = useCallback(async () => {
     if (outsideFlowActiveRef.current) return;
     if (outsideEpisodeDoneRef.current) return;
@@ -280,15 +291,12 @@ export default function MapScreen() {
 
       outsideAttemptCountRef.current = attemptNumber + 1;
 
-      // Log every EXIT attempt
       await logAlert("GEOFENCE_EXIT");
 
-      // Notify if enabled
       if (prefs.notifyExit) {
         await sendGeofenceBreachNotification();
       }
 
-      // Show popup every attempt
       showOutsideMutePrompt();
 
       if (attemptNumber === OUTSIDE_ALERT_MAX - 1) {
@@ -297,10 +305,8 @@ export default function MapScreen() {
       }
     };
 
-    // #1 immediately
     await runAttempt(0);
 
-    // #2 and #3
     for (let i = 1; i < OUTSIDE_ALERT_MAX; i++) {
       const timer = setTimeout(async () => {
         await runAttempt(i);
@@ -308,9 +314,7 @@ export default function MapScreen() {
 
       outsideTimersRef.current.push(timer);
     }
-  }, [clearOutsideTimers, prefs.notifyExit, showOutsideMutePrompt]);
-
-  // 5) Old Interval Effect has been deleted.
+  }, [clearOutsideTimers, prefs.notifyExit, showOutsideMutePrompt, logAlert]);
 
   useEffect(() => {
     if (!uid) return;
@@ -340,6 +344,7 @@ export default function MapScreen() {
   useEffect(() => {
     setPetName("—");
     setDeviceId(null);
+    setAvatarBase64("");
     setPetLastLocation(null);
     setPetLastTsMs(null);
 
@@ -361,6 +366,10 @@ export default function MapScreen() {
 
       const dev = data?.deviceId;
       setDeviceId(typeof dev === "string" && dev.trim() ? dev : null);
+
+      setAvatarBase64(
+        typeof data?.avatarBase64 === "string" ? data.avatarBase64 : ""
+      );
 
       const gf = data?.geofence;
       if (
@@ -429,7 +438,7 @@ export default function MapScreen() {
 
         await mirrorLastLocationToPet(ping.lat, ping.lng, ping.serverTimeMs);
       } catch {
-        // fallback still available
+        // fallback still available from pet doc
       }
     };
 
@@ -563,18 +572,27 @@ export default function MapScreen() {
     <View style={styles.container}>
       <MapView ref={mapRef} style={styles.map} initialRegion={initialRegion} showsUserLocation>
         {displayLocation && (
-          <Marker coordinate={displayLocation} anchor={{ x: 0.5, y: 0.5 }}>
+          <Marker
+            key={`${activePetId}-${avatarBase64 ? "avatar" : "fallback"}-${displayLocation.latitude}-${displayLocation.longitude}`}
+            coordinate={displayLocation}
+            anchor={{ x: 0.5, y: 0.5 }}
+            tracksViewChanges={trackMarkerViewChanges}
+          >
             <View
-              style={{
-                backgroundColor: isInsideGeofence ? "#2E7D32" : "#C62828",
-                padding: 10,
-                borderRadius: 30,
-                borderWidth: 3,
-                borderColor: "#fff",
-                elevation: 6,
-              }}
+              style={[
+                styles.petMarkerWrap,
+                { backgroundColor: isInsideGeofence ? "#2E7D32" : "#C62828" },
+              ]}
             >
-              <AppText style={{ fontSize: 22 }}>🐱</AppText>
+              {avatarBase64 ? (
+                <Image
+                  source={{ uri: avatarBase64 }}
+                  style={styles.petMarkerImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <AppText style={styles.petMarkerFallback}>🐱</AppText>
+              )}
             </View>
           </Marker>
         )}
@@ -586,17 +604,8 @@ export default function MapScreen() {
           }}
           anchor={{ x: 0.5, y: 0.5 }}
         >
-          <View
-            style={{
-              backgroundColor: "#fff",
-              padding: 10,
-              borderRadius: 30,
-              borderWidth: 3,
-              borderColor: "rgba(46,125,50,0.75)",
-              elevation: 6,
-            }}
-          >
-            <AppText style={{ fontSize: 22 }}>🏠</AppText>
+          <View style={styles.homeMarkerWrap}>
+            <AppText style={styles.homeMarkerText}>🏠</AppText>
           </View>
         </Marker>
 
@@ -698,8 +707,6 @@ export default function MapScreen() {
   );
 }
 
-// ... styles remain the same
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   map: { flex: 1 },
@@ -721,6 +728,38 @@ const styles = StyleSheet.create({
     ...typography.subheading,
     color: colors.error,
     textAlign: "center",
+  },
+
+  petMarkerWrap: {
+    padding: 4,
+    borderRadius: 30,
+    borderWidth: 3,
+    borderColor: "#fff",
+    elevation: 6,
+    width: 52,
+    height: 52,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  petMarkerImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  petMarkerFallback: {
+    fontSize: 22,
+  },
+
+  homeMarkerWrap: {
+    backgroundColor: "#fff",
+    padding: 10,
+    borderRadius: 30,
+    borderWidth: 3,
+    borderColor: "rgba(46,125,50,0.75)",
+    elevation: 6,
+  },
+  homeMarkerText: {
+    fontSize: 22,
   },
 
   overlayCard: {

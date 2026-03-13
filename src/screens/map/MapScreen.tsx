@@ -32,6 +32,7 @@ import {
   sendGeofenceReturnNotification,
 } from "../../services/notificationService";
 import AppText from "../../components/ui/AppText";
+import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 
 type LatLng = { latitude: number; longitude: number };
 type GeofenceEvent = "EXIT" | "RETURN" | null;
@@ -51,7 +52,7 @@ type ApiPing = {
   deviceId: string;
   lat: number;
   lng: number;
-  serverTimeMs: number;
+  serverTimeMs: number | null;
 };
 
 type MuteOption = {
@@ -90,20 +91,20 @@ function isValidLatLng(lat: number, lng: number) {
 }
 
 async function fetchLatestPing(deviceId: string): Promise<ApiPing> {
-  const reqTime = Date.now();
-  const url = `${API_BASE}/api/recentPing/${encodeURIComponent(deviceId)}/${reqTime}`;
+  const url = `${API_BASE}/api/lastID/${encodeURIComponent(deviceId)}`;
 
   const res = await fetch(url);
   if (!res.ok) throw new Error(`API error ${res.status}`);
 
   const raw = await res.json();
+  const parsedDate = Number(raw.date);
 
   return {
     pingId: raw.id ?? null,
     deviceId: raw.device_id,
-    lat: parseFloat(raw.lat),
-    lng: parseFloat(raw.long),
-    serverTimeMs: parseInt(raw.date) * 1000,
+    lat: Number(raw.lat),
+    lng: Number(raw.long),
+    serverTimeMs: Number.isFinite(parsedDate) ? parsedDate * 1000 : null,
   };
 }
 
@@ -118,7 +119,6 @@ export default function MapScreen() {
   const outsideMuteUntilRef = useRef<number | null>(null);
   const outsideFlowActiveRef = useRef(false);
   const outsidePromptShownRef = useRef(false);
-  const outsideAttemptCountRef = useRef(0);
   const outsideEpisodeDoneRef = useRef(false);
   const isInsideGeofenceRef = useRef<boolean | null>(null);
 
@@ -140,9 +140,6 @@ export default function MapScreen() {
   const [catLocation, setCatLocation] = useState<LatLng | null>(null);
   const [catTimestampMs, setCatTimestampMs] = useState<number | null>(null);
 
-  const [petLastLocation, setPetLastLocation] = useState<LatLng | null>(null);
-  const [petLastTsMs, setPetLastTsMs] = useState<number | null>(null);
-
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
   const [isInsideGeofence, setIsInsideGeofence] = useState<boolean | null>(null);
   const [geofenceEvent, setGeofenceEvent] = useState<GeofenceEvent>(null);
@@ -153,16 +150,6 @@ export default function MapScreen() {
   );
 
   const [trackMarkerViewChanges, setTrackMarkerViewChanges] = useState(true);
-
-  const displayLocation = useMemo(
-    () => catLocation ?? petLastLocation ?? null,
-    [catLocation, petLastLocation]
-  );
-
-  const displayTimestampMs = useMemo(
-    () => catTimestampMs ?? petLastTsMs ?? null,
-    [catTimestampMs, petLastTsMs]
-  );
 
   useEffect(() => {
     setupNotifications();
@@ -180,7 +167,7 @@ export default function MapScreen() {
     }, 1000);
 
     return () => clearTimeout(timeout);
-  }, [avatarBase64, displayLocation]);
+  }, [avatarBase64, catLocation]);
 
   const clearOutsideTimers = useCallback(() => {
     for (const timer of outsideTimersRef.current) {
@@ -194,7 +181,6 @@ export default function MapScreen() {
     outsideFlowActiveRef.current = false;
     outsidePromptShownRef.current = false;
     outsideMuteUntilRef.current = null;
-    outsideAttemptCountRef.current = 0;
     outsideEpisodeDoneRef.current = false;
     setOutsideMuteModalVisible(false);
   }, [clearOutsideTimers]);
@@ -210,49 +196,49 @@ export default function MapScreen() {
     [clearOutsideTimers]
   );
 
-const logAlert = useCallback(
-  async (type: "GEOFENCE_EXIT" | "GEOFENCE_RETURN") => {
-    if (!uid || !activePetId) return;
+  const logAlert = useCallback(
+    async (type: "GEOFENCE_EXIT" | "GEOFENCE_RETURN") => {
+      if (!uid || !activePetId) return;
 
-    const alertsRef = collection(db, "users", uid, "pets", activePetId, "alerts");
-    const now = Date.now();
-    const cutoff = now - ALERT_RETENTION_HOURS * 60 * 60 * 1000;
+      const alertsRef = collection(db, "users", uid, "pets", activePetId, "alerts");
+      const now = Date.now();
+      const cutoff = now - ALERT_RETENTION_HOURS * 60 * 60 * 1000;
 
-    const message =
-      type === "GEOFENCE_EXIT"
-        ? `${petName} left the safe zone.`
-        : `${petName} returned to the safe zone.`;
+      const message =
+        type === "GEOFENCE_EXIT"
+          ? `${petName} left the safe zone.`
+          : `${petName} returned to the safe zone.`;
 
-    const actionTip =
-      type === "GEOFENCE_EXIT"
-        ? "Check the live map to see the latest location."
-        : "Your pet is back within the configured safe area.";
+      const actionTip =
+        type === "GEOFENCE_EXIT"
+          ? "Check the live map to see the latest location."
+          : "Your pet is back within the configured safe area.";
 
-    const oldAlertsQuery = query(alertsRef, where("timestampMs", "<", cutoff));
-    const oldAlertsSnap = await getDocs(oldAlertsQuery);
+      const oldAlertsQuery = query(alertsRef, where("timestampMs", "<", cutoff));
+      const oldAlertsSnap = await getDocs(oldAlertsQuery);
 
-    for (const docSnap of oldAlertsSnap.docs) {
-      await deleteDoc(docSnap.ref);
-    }
-
-    await addDoc(alertsRef, {
-      type,
-      message,
-      actionTip,
-      timestampMs: now,
-    });
-
-    const allAlertsQuery = query(alertsRef, orderBy("timestampMs", "desc"));
-    const allAlertsSnap = await getDocs(allAlertsQuery);
-
-    if (allAlertsSnap.size > MAX_ALERTS) {
-      const docsToDelete = allAlertsSnap.docs.slice(MAX_ALERTS);
-      for (const docSnap of docsToDelete) {
+      for (const docSnap of oldAlertsSnap.docs) {
         await deleteDoc(docSnap.ref);
       }
-    }
-  },
-  [uid, activePetId, petName]
+
+      await addDoc(alertsRef, {
+        type,
+        message,
+        actionTip,
+        timestampMs: now,
+      });
+
+      const allAlertsQuery = query(alertsRef, orderBy("timestampMs", "desc"));
+      const allAlertsSnap = await getDocs(allAlertsQuery);
+
+      if (allAlertsSnap.size > MAX_ALERTS) {
+        const docsToDelete = allAlertsSnap.docs.slice(MAX_ALERTS);
+        for (const docSnap of docsToDelete) {
+          await deleteDoc(docSnap.ref);
+        }
+      }
+    },
+    [uid, activePetId, petName]
   );
 
   const showOutsideMutePrompt = useCallback(() => {
@@ -289,8 +275,6 @@ const logAlert = useCallback(
         return;
       }
 
-      outsideAttemptCountRef.current = attemptNumber + 1;
-
       await logAlert("GEOFENCE_EXIT");
 
       if (prefs.notifyExit) {
@@ -314,7 +298,7 @@ const logAlert = useCallback(
 
       outsideTimersRef.current.push(timer);
     }
-  }, [clearOutsideTimers, prefs.notifyExit, showOutsideMutePrompt, logAlert]);
+  }, [clearOutsideTimers, logAlert, prefs.notifyExit, showOutsideMutePrompt]);
 
   useEffect(() => {
     if (!uid) return;
@@ -328,25 +312,12 @@ const logAlert = useCallback(
     return () => unsub();
   }, [uid]);
 
-  const mirrorLastLocationToPet = useCallback(
-    async (lat: number, lng: number, timestampMs: number) => {
-      if (!uid || !activePetId) return;
-
-      await updateDoc(doc(db, "users", uid, "pets", activePetId), {
-        "lastLocation.lat": lat,
-        "lastLocation.lng": lng,
-        "lastLocation.timestamp": timestampMs,
-      });
-    },
-    [uid, activePetId]
-  );
-
   useEffect(() => {
     setPetName("—");
     setDeviceId(null);
     setAvatarBase64("");
-    setPetLastLocation(null);
-    setPetLastTsMs(null);
+    setCatLocation(null);
+    setCatTimestampMs(null);
 
     prevInsideRef.current = null;
     setGeofenceEvent(null);
@@ -388,23 +359,6 @@ const logAlert = useCallback(
       if (typeof p?.notifyExit === "boolean" && typeof p?.notifyReturn === "boolean") {
         setPrefs({ notifyExit: p.notifyExit, notifyReturn: p.notifyReturn });
       }
-
-      const ll = data?.lastLocation;
-      const lat = ll?.lat;
-      const lng = ll?.lng;
-      const ts = ll?.timestamp;
-
-      const latNum = typeof lat === "number" ? lat : Number(lat);
-      const lngNum = typeof lng === "number" ? lng : Number(lng);
-
-      if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
-        setPetLastLocation({ latitude: latNum, longitude: lngNum });
-      } else {
-        setPetLastLocation(null);
-      }
-
-      if (typeof ts === "number" && Number.isFinite(ts)) setPetLastTsMs(ts);
-      else setPetLastTsMs(null);
     });
 
     return () => unsub();
@@ -431,14 +385,23 @@ const logAlert = useCallback(
         const ping = await fetchLatestPing(deviceId);
         if (cancelled) return;
 
-        if (!isValidLatLng(ping.lat, ping.lng)) return;
+        console.log("MAP API PING:", ping);
+
+        if (!isValidLatLng(ping.lat, ping.lng)) {
+          console.log("Rejected invalid lat/lng:", ping.lat, ping.lng);
+          return;
+        }
 
         setCatLocation({ latitude: ping.lat, longitude: ping.lng });
-        setCatTimestampMs(ping.serverTimeMs);
 
-        await mirrorLastLocationToPet(ping.lat, ping.lng, ping.serverTimeMs);
-      } catch {
-        // fallback still available from pet doc
+        const effectiveTimeMs =
+          typeof ping.serverTimeMs === "number" && Number.isFinite(ping.serverTimeMs)
+            ? ping.serverTimeMs
+            : Date.now();
+
+        setCatTimestampMs(effectiveTimeMs);
+      } catch (err) {
+        console.log("Map polling failed:", err);
       }
     };
 
@@ -449,14 +412,14 @@ const logAlert = useCallback(
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [deviceId, mirrorLastLocationToPet, resetOutsideFlow]);
+  }, [deviceId, resetOutsideFlow]);
 
   useEffect(() => {
-    if (!displayLocation) return;
+    if (!catLocation) return;
 
     const d = haversineMeters(
-      displayLocation.latitude,
-      displayLocation.longitude,
+      catLocation.latitude,
+      catLocation.longitude,
       geofence.center.lat,
       geofence.center.lng
     );
@@ -479,10 +442,10 @@ const logAlert = useCallback(
     else setGeofenceEvent(null);
 
     prevInsideRef.current = inside;
-  }, [displayLocation, geofence.center.lat, geofence.center.lng, geofence.radiusMeters]);
+  }, [catLocation, geofence.center.lat, geofence.center.lng, geofence.radiusMeters]);
 
   useEffect(() => {
-    const target = displayLocation ?? {
+    const target = catLocation ?? {
       latitude: geofence.center.lat,
       longitude: geofence.center.lng,
     };
@@ -496,7 +459,7 @@ const logAlert = useCallback(
       },
       700
     );
-  }, [displayLocation, geofence.center.lat, geofence.center.lng]);
+  }, [catLocation, geofence.center.lat, geofence.center.lng]);
 
   useEffect(() => {
     if (geofenceEvent === "EXIT") {
@@ -514,7 +477,7 @@ const logAlert = useCallback(
     }
 
     logAlert("GEOFENCE_RETURN");
-  }, [geofenceEvent, prefs.notifyReturn, resetOutsideFlow]);
+  }, [geofenceEvent, logAlert, prefs.notifyReturn, resetOutsideFlow]);
 
   useEffect(() => {
     return () => {
@@ -524,7 +487,7 @@ const logAlert = useCallback(
 
   const initialRegion: Region = useMemo(() => {
     const fallback = { latitude: geofence.center.lat, longitude: geofence.center.lng };
-    const center = displayLocation ?? fallback;
+    const center = catLocation ?? fallback;
 
     return {
       latitude: center.latitude,
@@ -532,21 +495,27 @@ const logAlert = useCallback(
       latitudeDelta: 0.01,
       longitudeDelta: 0.01,
     };
-  }, [displayLocation, geofence.center.lat, geofence.center.lng]);
+  }, [catLocation, geofence.center.lat, geofence.center.lng]);
 
   const lastUpdatedText = useMemo(() => {
-    if (!displayTimestampMs) return "—";
-    return new Date(displayTimestampMs).toLocaleTimeString();
-  }, [displayTimestampMs]);
+    if (!catTimestampMs) return "—";
+    return new Date(catTimestampMs).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }, [catTimestampMs]);
 
   const onlineStatus = useMemo(() => {
     if (!deviceId) return "No device";
-    if (!displayTimestampMs) return "Waiting for signal…";
+    if (!catTimestampMs) return "Waiting for signal…";
 
-    const ageMs = Date.now() - displayTimestampMs;
+    const ageMs = Date.now() - catTimestampMs;
     if (ageMs <= 120_000) return "Online";
     return "Offline";
-  }, [deviceId, displayTimestampMs]);
+  }, [deviceId, catTimestampMs]);
 
   if (loading) {
     return (
@@ -571,10 +540,10 @@ const logAlert = useCallback(
   return (
     <View style={styles.container}>
       <MapView ref={mapRef} style={styles.map} initialRegion={initialRegion} showsUserLocation>
-        {displayLocation && (
+        {catLocation && (
           <Marker
-            key={`${activePetId}-${avatarBase64 ? "avatar" : "fallback"}-${displayLocation.latitude}-${displayLocation.longitude}`}
-            coordinate={displayLocation}
+            key={`${activePetId}-${avatarBase64 ? "avatar" : "fallback"}-${catLocation.latitude}-${catLocation.longitude}`}
+            coordinate={catLocation}
             anchor={{ x: 0.5, y: 0.5 }}
             tracksViewChanges={trackMarkerViewChanges}
           >
@@ -605,7 +574,7 @@ const logAlert = useCallback(
           anchor={{ x: 0.5, y: 0.5 }}
         >
           <View style={styles.homeMarkerWrap}>
-            <AppText style={styles.homeMarkerText}>🏠</AppText>
+           <Icon name="home-map-marker" color="#2F855A" style={styles.homeMarkerText} />
           </View>
         </Marker>
 
@@ -623,7 +592,7 @@ const logAlert = useCallback(
         <AppText style={styles.overlayTitle}>Live Tracking</AppText>
 
         <AppText style={styles.overlayLine}>
-          Pet: {activePetId ? petName : "No active pet"}
+          Name: {activePetId ? petName : "No active pet"}
         </AppText>
         <AppText style={styles.overlayLine}>Device: {deviceId ?? "Not linked"}</AppText>
         <AppText style={styles.overlayLine}>Status: {onlineStatus}</AppText>
@@ -759,7 +728,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   homeMarkerText: {
-    fontSize: 22,
+    fontSize: 25,
   },
 
   overlayCard: {

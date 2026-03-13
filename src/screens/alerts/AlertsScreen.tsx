@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   StyleSheet,
@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { collection, doc, onSnapshot, orderBy, query, updateDoc } from "firebase/firestore";
+import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 
 import { auth, db } from "../../config/firebase";
 import { spacing, typography } from "../../theme";
@@ -37,24 +38,24 @@ type AlertDoc = {
   message: string;
   actionTip?: string;
   timestampMs?: number;
-  timestamp?: number; // backward compatibility
+  timestamp?: number;
 };
 
-export default function AlertsScreen() {
-  const [activePetPrefs, setActivePetPrefs] = useState<PetOption["prefs"] | null>(null);
+const GREEN = "#5E8F3C";
+const YELLOW = "#F4D35E";
 
+export default function AlertsScreen() {
   const uid = auth.currentUser?.uid;
 
   const [pets, setPets] = useState<PetOption[]>([]);
   const [activePetId, setActivePetId] = useState<string | null>(null);
   const [activePet, setActivePet] = useState<PetOption | null>(null);
+  const [activePetPrefs, setActivePetPrefs] = useState<PetOption["prefs"] | null>(null);
 
   const [alerts, setAlerts] = useState<AlertDoc[]>([]);
   const [petModalOpen, setPetModalOpen] = useState(false);
-
   const [notifEnabled, setNotifEnabled] = useState(true);
 
-  // 1) user doc -> activePetId
   useEffect(() => {
     if (!uid) return;
 
@@ -67,7 +68,6 @@ export default function AlertsScreen() {
     return () => unsub();
   }, [uid]);
 
-  // 2) pets list
   useEffect(() => {
     if (!uid) return;
 
@@ -97,7 +97,6 @@ export default function AlertsScreen() {
     return () => unsub();
   }, [uid, activePetId]);
 
-  // 3) resolve activePet from list
   useEffect(() => {
     if (!activePetId) {
       setActivePet(null);
@@ -108,7 +107,6 @@ export default function AlertsScreen() {
     setActivePet(found);
   }, [pets, activePetId]);
 
-  // 3.5) authoritative prefs from active pet
   useEffect(() => {
     if (!uid || !activePetId) {
       setActivePetPrefs(null);
@@ -137,14 +135,12 @@ export default function AlertsScreen() {
     return () => unsub();
   }, [uid, activePetId]);
 
-  // 3.8) sync master toggle
   useEffect(() => {
     const exitOn = !!activePetPrefs?.notifyExit;
     const returnOn = !!activePetPrefs?.notifyReturn;
     setNotifEnabled(exitOn || returnOn);
   }, [activePetPrefs]);
 
-  // 4) alerts for active pet
   useEffect(() => {
     if (!uid || !activePetId) {
       setAlerts([]);
@@ -165,14 +161,7 @@ export default function AlertsScreen() {
     return () => unsub();
   }, [uid, activePetId]);
 
-  const headerTitle = useMemo(() => {
-    return "Alerts";
-  }, []);
-
-  const headerSubtitle = useMemo(() => {
-    if (!activePet) return "Select a pet";
-    return `for ${activePet.name}`;
-  }, [activePet]);
+  const headerTitle = activePet ? `Alerts for ${activePet.name}` : "Select a pet";
 
   async function selectPet(petId: string) {
     if (!uid) return;
@@ -223,22 +212,24 @@ export default function AlertsScreen() {
     if (type === "GEOFENCE_EXIT") {
       return {
         label: "Left safe zone",
-        icon: "⚠️",
+        icon: "alert-outline",
         badgeBg: "rgba(198,40,40,0.15)",
         badgeText: "#C62828",
       };
     }
+
     if (type === "GEOFENCE_RETURN") {
       return {
         label: "Back safe",
-        icon: "🏠",
+        icon: "home-alert-outline",
         badgeBg: "rgba(46,125,50,0.15)",
         badgeText: "#2E7D32",
       };
     }
+
     return {
       label: type,
-      icon: "🔔",
+      icon: "bell-outline",
       badgeBg: "rgba(0,0,0,0.08)",
       badgeText: "rgba(0,0,0,0.7)",
     };
@@ -260,7 +251,7 @@ export default function AlertsScreen() {
         <View style={styles.alertTopRow}>
           <View style={styles.alertLeft}>
             <View style={[styles.iconPill, { backgroundColor: visual.badgeBg }]}>
-              <AppText style={styles.iconText}>{visual.icon}</AppText>
+              <Icon name={visual.icon} size={24} color={visual.badgeText} />
             </View>
 
             <View style={{ flex: 1 }}>
@@ -282,7 +273,9 @@ export default function AlertsScreen() {
 
         <AppText style={styles.alertMessage}>{item.message}</AppText>
 
-        {item.actionTip ? <AppText style={styles.alertTip}>{item.actionTip}</AppText> : null}
+        {item.actionTip ? (
+          <AppText style={styles.alertTip}>{item.actionTip}</AppText>
+        ) : null}
       </View>
     );
   };
@@ -290,10 +283,19 @@ export default function AlertsScreen() {
   if (!uid) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
-        <View style={styles.content}>
-          <AppText variant="heading" style={styles.h1}>
-            Alerts
-          </AppText>
+        <View style={styles.header}>
+          <View style={styles.headerRow}>
+            <View style={styles.iconCircle}>
+              <Icon name="paw" size={24} color="#333" />
+            </View>
+
+            <AppText variant="heading" style={styles.headerTitle}>
+              Alerts
+            </AppText>
+          </View>
+        </View>
+
+        <View style={styles.centerContent}>
           <AppText style={styles.subtle}>Please log in to view alerts.</AppText>
         </View>
       </SafeAreaView>
@@ -303,10 +305,15 @@ export default function AlertsScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
-        <AppText variant="heading" style={styles.headerTitle}>
-          {headerTitle}
-        </AppText>
-        <AppText style={styles.headerSubtitle}>{headerSubtitle}</AppText>
+        <View style={styles.headerRow}>
+          <View style={styles.iconCircle}>
+            <Icon name="paw" size={24} color="#333" />
+          </View>
+
+          <AppText variant="heading" style={styles.headerTitle}>
+            {headerTitle}
+          </AppText>
+        </View>
       </View>
 
       <View style={styles.content}>
@@ -321,21 +328,19 @@ export default function AlertsScreen() {
               {activePet?.avatarBase64 ? (
                 <Image source={{ uri: activePet.avatarBase64 }} style={styles.avatarImage} />
               ) : (
-                <AppText style={styles.avatarText}>🐾</AppText>
+                <Icon name="cat" size={24} color="#D69E2E" />
               )}
             </View>
 
             <View style={{ flex: 1 }}>
-              <AppText style={styles.petName}>
-                {activePet?.name ?? "Select a pet"}
-              </AppText>
+              <AppText style={styles.petName}>{activePet?.name ?? "Select a pet"}</AppText>
               <AppText style={styles.petSub}>
                 {activePet?.breed ?? activePet?.colorPattern ?? "Tap to choose"}
               </AppText>
             </View>
           </View>
 
-          <AppText style={styles.chevron}>⌄</AppText>
+          <Icon name="chevron-down" size={22} color="#333" style={styles.chevron} />
         </TouchableOpacity>
 
         <View style={styles.whiteRow}>
@@ -385,6 +390,7 @@ export default function AlertsScreen() {
 
           {pets.map((p) => {
             const selected = p.id === activePetId;
+
             return (
               <TouchableOpacity
                 key={p.id}
@@ -396,7 +402,7 @@ export default function AlertsScreen() {
                   {p.avatarBase64 ? (
                     <Image source={{ uri: p.avatarBase64 }} style={styles.modalAvatarImage} />
                   ) : (
-                    <AppText style={styles.modalAvatarText}>🐱</AppText>
+                    <Icon name="cat" size={24} color="#D69E2E" />
                   )}
                 </View>
 
@@ -407,7 +413,7 @@ export default function AlertsScreen() {
                   </AppText>
                 </View>
 
-                {selected ? <AppText style={styles.modalCheck}>✓</AppText> : null}
+                {selected ? <Icon name="check" size={20} color={GREEN} /> : null}
               </TouchableOpacity>
             );
           })}
@@ -425,11 +431,11 @@ export default function AlertsScreen() {
   );
 }
 
-const GREEN = "#5E8F3C";
-const YELLOW = "#F4D35E";
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: GREEN },
+  safe: {
+    flex: 1,
+    backgroundColor: GREEN,
+  },
 
   header: {
     paddingHorizontal: spacing.md,
@@ -438,12 +444,30 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "rgba(255,255,255,0.25)",
   },
-  headerTitle: { color: "#fff" },
-  headerSubtitle: { color: "rgba(255,255,255,0.9)", marginTop: 2 },
 
-  content: { flex: 1, padding: spacing.md },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
 
-  h1: { color: "#fff" },
+  headerTitle: {
+    color: "#fff",
+    marginLeft: spacing.sm,
+    flexShrink: 1,
+  },
+
+  content: {
+    flex: 1,
+    padding: spacing.md,
+  },
+
+  centerContent: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.lg,
+  },
+
   subtle: {
     ...typography.body,
     color: "rgba(255,255,255,0.85)",
@@ -459,12 +483,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: spacing.md,
   },
+
   petLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.md,
     flex: 1,
   },
+
   avatar: {
     width: 54,
     height: 54,
@@ -473,16 +498,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+    marginRight: spacing.md,
   },
+
   avatarImage: {
     width: "100%",
     height: "100%",
     borderRadius: 18,
   },
-  avatarText: { fontSize: 20 },
-  petName: { ...typography.subheading, color: "#2b4b1f" },
-  petSub: { ...typography.body, color: "rgba(0,0,0,0.55)", marginTop: 2 },
-  chevron: { fontSize: 20, color: "rgba(0,0,0,0.55)", marginLeft: spacing.sm },
+
+  petName: {
+    ...typography.subheading,
+    color: "#2b4b1f",
+  },
+
+  petSub: {
+    ...typography.body,
+    color: "rgba(0,0,0,0.55)",
+    marginTop: 2,
+  },
+
+  chevron: {
+    marginLeft: spacing.sm,
+  },
 
   whiteRow: {
     backgroundColor: "#fff",
@@ -493,10 +531,22 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: spacing.md,
   },
-  whiteRowTitle: { ...typography.subheading, color: "#111" },
-  whiteRowSub: { ...typography.body, color: "rgba(0,0,0,0.6)", marginTop: 2 },
 
-  sectionTitle: { color: "#fff", marginBottom: spacing.sm },
+  whiteRowTitle: {
+    ...typography.subheading,
+    color: "#111",
+  },
+
+  whiteRowSub: {
+    ...typography.body,
+    color: "rgba(0,0,0,0.6)",
+    marginTop: 2,
+  },
+
+  sectionTitle: {
+    color: "#fff",
+    marginBottom: spacing.sm,
+  },
 
   alertCard: {
     backgroundColor: "#fff",
@@ -505,13 +555,19 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "rgba(0,0,0,0.05)",
   },
+
   alertTopRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: spacing.sm,
   },
-  alertLeft: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flex: 1 },
+
+  alertLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
 
   iconPill: {
     width: 38,
@@ -519,60 +575,102 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+    marginRight: spacing.sm,
+  
   },
-  iconText: { fontSize: 18 },
 
   badge: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
+    marginLeft: spacing.sm,
   },
-  badgeText: { ...typography.body, fontWeight: "800" },
 
-  alertTitle: { ...typography.subheading, color: "#111" },
-  alertTime: { ...typography.body, color: "rgba(0,0,0,0.55)", marginTop: 2 },
+  badgeText: {
+    ...typography.body,
+    fontWeight: "800",
+  },
 
-  alertMessage: { ...typography.body, color: "#111", marginTop: 2 },
-  alertTip: { ...typography.body, color: "rgba(0,0,0,0.6)", marginTop: spacing.xs },
+  alertTitle: {
+    ...typography.subheading,
+    color: "#111",
+  },
 
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
+  alertTime: {
+    ...typography.body,
+    color: "rgba(0,0,0,0.55)",
+    marginTop: 2,
+  },
+
+  alertMessage: {
+    ...typography.body,
+    color: "#111",
+    marginTop: 2,
+  },
+
+  alertTip: {
+    ...typography.body,
+    color: "rgba(0,0,0,0.6)",
+    marginTop: spacing.xs,
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+
   modalSheet: {
     backgroundColor: "#fff",
     padding: spacing.md,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
   },
-  modalTitle: { color: "#111", marginBottom: spacing.sm },
+
+  modalTitle: {
+    color: "#111",
+    marginBottom: spacing.sm,
+  },
 
   modalItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.md,
     padding: spacing.md,
     borderRadius: 14,
     backgroundColor: "rgba(0,0,0,0.03)",
     marginBottom: spacing.sm,
   },
-  modalItemSelected: { backgroundColor: "rgba(94, 143, 60, 0.12)" },
+
+  modalItemSelected: {
+    backgroundColor: "rgba(94,143,60,0.12)",
+  },
 
   modalAvatar: {
     width: 42,
     height: 42,
     borderRadius: 14,
-    backgroundColor: "rgba(244, 211, 94, 0.55)",
+    backgroundColor: "rgba(244,211,94,0.55)",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
+    marginRight: spacing.md,
   },
+
   modalAvatarImage: {
     width: "100%",
     height: "100%",
     borderRadius: 14,
   },
-  modalAvatarText: { fontSize: 18 },
-  modalName: { ...typography.subheading, color: "#111" },
-  modalSub: { ...typography.body, color: "rgba(0,0,0,0.55)", marginTop: 2 },
-  modalCheck: { fontSize: 18, fontWeight: "900", color: GREEN },
+
+  modalName: {
+    ...typography.subheading,
+    color: "#111",
+  },
+
+  modalSub: {
+    ...typography.body,
+    color: "rgba(0,0,0,0.55)",
+    marginTop: 2,
+  },
 
   modalClose: {
     borderRadius: 14,
@@ -581,5 +679,18 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.06)",
     marginTop: spacing.sm,
   },
-  modalCloseText: { ...typography.subheading, color: "#111" },
+
+  modalCloseText: {
+    ...typography.subheading,
+    color: "#111",
+  },
+
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#D69E2E",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

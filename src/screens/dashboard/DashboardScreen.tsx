@@ -1,12 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-  ActivityIndicator,
-  Image,
-  Modal,
-  Pressable,
+import {View, StyleSheet, TouchableOpacity, ActivityIndicator, Image, Modal, Pressable,
 } from "react-native";
 import MapView, { Marker, Circle, Polyline, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -17,6 +10,7 @@ import { spacing, typography } from "../../theme";
 import { haversineMeters } from "../../utils/geo";
 import AppText from "../../components/ui/AppText";
 import { setupNotifications } from "../../services/notificationService";
+import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 
 type LatLng = { latitude: number; longitude: number };
 
@@ -31,7 +25,6 @@ type PetDoc = {
   deviceId?: string;
   avatarBase64?: string;
   geofence?: Geofence;
-  lastLocation?: { lat?: number; lng?: number; timestamp?: number };
 };
 
 type PetOption = {
@@ -47,7 +40,7 @@ type ApiPing = {
   deviceId: string;
   lat: number;
   lng: number;
-  serverTimeMs: number;
+  serverTimeMs: number | null;
 };
 
 const GREEN = "#5E8F3C";
@@ -68,20 +61,20 @@ function isValidLatLng(lat: number, lng: number) {
 }
 
 async function fetchLatestPing(deviceId: string): Promise<ApiPing> {
-  const reqTime = Date.now();
-  const url = `${API_BASE}/api/recentPing/${encodeURIComponent(deviceId)}/${reqTime}`;
+  const url = `${API_BASE}/api/lastID/${encodeURIComponent(deviceId)}`;
 
   const res = await fetch(url);
   if (!res.ok) throw new Error(`API error ${res.status}`);
 
   const raw = await res.json();
+  const parsedDate = Number(raw.date);
 
   return {
     pingId: raw.id ?? null,
     deviceId: raw.device_id,
-    lat: parseFloat(raw.lat),
-    lng: parseFloat(raw.long),
-    serverTimeMs: parseInt(raw.date) * 1000,
+    lat: Number(raw.lat),
+    lng: Number(raw.long),
+    serverTimeMs: Number.isFinite(parsedDate) ? parsedDate * 1000 : null,
   };
 }
 
@@ -104,9 +97,6 @@ export default function DashboardScreen({ navigation }: any) {
     center: { lat: 43.6577, lng: -79.3792 },
     radiusMeters: 120,
   });
-
-  const [petCachedLoc, setPetCachedLoc] = useState<LatLng | null>(null);
-  const [petCachedTsMs, setPetCachedTsMs] = useState<number | null>(null);
 
   const [deviceLoc, setDeviceLoc] = useState<LatLng | null>(null);
   const [lastSeenMs, setLastSeenMs] = useState<number | null>(null);
@@ -163,8 +153,9 @@ export default function DashboardScreen({ navigation }: any) {
     setPetBreed(undefined);
     setDeviceId(null);
     setAvatarBase64("");
-    setPetCachedLoc(null);
-    setPetCachedTsMs(null);
+    setDeviceLoc(null);
+    setLastSeenMs(null);
+    setLastTsMs(null);
 
     const petRef = doc(db, "users", uid, "pets", activePetId);
     const unsub = onSnapshot(petRef, (snap) => {
@@ -191,20 +182,6 @@ export default function DashboardScreen({ navigation }: any) {
         setGeofence(gf);
       }
 
-      const ll = data.lastLocation;
-      const latNum = typeof ll?.lat === "number" ? ll.lat : Number(ll?.lat);
-      const lngNum = typeof ll?.lng === "number" ? ll.lng : Number(ll?.lng);
-      const tsNum = typeof ll?.timestamp === "number" ? ll.timestamp : Number(ll?.timestamp);
-
-      if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
-        setPetCachedLoc({ latitude: latNum, longitude: lngNum });
-      } else {
-        setPetCachedLoc(null);
-      }
-
-      if (Number.isFinite(tsNum)) setPetCachedTsMs(tsNum);
-      else setPetCachedTsMs(null);
-
       setLoading(false);
     });
 
@@ -225,13 +202,24 @@ export default function DashboardScreen({ navigation }: any) {
         const ping = await fetchLatestPing(deviceId);
         if (cancelled) return;
 
-        if (!isValidLatLng(ping.lat, ping.lng)) return;
+        console.log("DASHBOARD API PING:", ping);
+
+        if (!isValidLatLng(ping.lat, ping.lng)) {
+          console.log("Rejected invalid lat/lng:", ping.lat, ping.lng);
+          return;
+        }
 
         setDeviceLoc({ latitude: ping.lat, longitude: ping.lng });
-        setLastTsMs(ping.serverTimeMs);
-        setLastSeenMs(ping.serverTimeMs);
-      } catch {
-        // fallback still works from cached pet location
+
+        const effectiveTimeMs =
+          typeof ping.serverTimeMs === "number" && Number.isFinite(ping.serverTimeMs)
+            ? ping.serverTimeMs
+            : Date.now();
+
+        setLastTsMs(effectiveTimeMs);
+        setLastSeenMs(effectiveTimeMs);
+      } catch (err) {
+        console.log("Dashboard polling failed:", err);
       }
     };
 
@@ -244,7 +232,7 @@ export default function DashboardScreen({ navigation }: any) {
     };
   }, [deviceId]);
 
-  const catLocation = deviceLoc ?? petCachedLoc;
+  const catLocation = deviceLoc;
 
   useEffect(() => {
     setTrackMarkerViewChanges(true);
@@ -279,7 +267,7 @@ export default function DashboardScreen({ navigation }: any) {
   }, [catLocation, distanceMeters, geofence.radiusMeters]);
 
   const lastSeenText = useMemo(() => {
-    const t = lastSeenMs ?? petCachedTsMs ?? null;
+    const t = lastSeenMs;
     if (!t) return "—";
 
     const ageMs = Date.now() - t;
@@ -290,7 +278,7 @@ export default function DashboardScreen({ navigation }: any) {
 
     const hrs = Math.floor(mins / 60);
     return `${hrs} hrs ago`;
-  }, [lastSeenMs, petCachedTsMs]);
+  }, [lastSeenMs]);
 
   const previewRegion: Region = useMemo(() => {
     const home = { latitude: geofence.center.lat, longitude: geofence.center.lng };
@@ -318,10 +306,16 @@ export default function DashboardScreen({ navigation }: any) {
   }, [catLocation, geofence.center.lat, geofence.center.lng]);
 
   const updatedText = useMemo(() => {
-    const t = lastTsMs ?? petCachedTsMs ?? null;
-    if (!t) return "—";
-    return new Date(t).toLocaleTimeString();
-  }, [lastTsMs, petCachedTsMs]);
+    if (!lastTsMs) return "—";
+
+    return new Date(lastTsMs).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }, [lastTsMs]);
 
   function openPetSwitcher() {
     setPetModalOpen(true);
@@ -365,7 +359,9 @@ export default function DashboardScreen({ navigation }: any) {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
         <View style={styles.headerRow}>
-          <AppText style={styles.paw}>🐾</AppText>
+           <View style={styles.iconCircle}>
+          <Icon name="paw" size={24} color="#333"/>
+          </View>
           <AppText variant="heading" style={styles.headerTitle}>
             Location
           </AppText>
@@ -383,7 +379,7 @@ export default function DashboardScreen({ navigation }: any) {
               {avatarBase64 ? (
                 <Image source={{ uri: avatarBase64 }} style={styles.petAvatarImage} />
               ) : (
-                <AppText style={styles.petAvatarFallback}>🐱</AppText>
+                <Icon name="cat" color="#D69E2E" style={styles.petAvatarFallback} />
               )}
             </View>
 
@@ -393,7 +389,7 @@ export default function DashboardScreen({ navigation }: any) {
             </View>
           </View>
 
-          <AppText style={styles.chevron}>⌄</AppText>
+          <Icon name="chevron-down" size={22} color="#333" style={styles.chevron} />
         </TouchableOpacity>
 
         <View style={styles.mapWrap}>
@@ -409,7 +405,7 @@ export default function DashboardScreen({ navigation }: any) {
               anchor={{ x: 0.5, y: 0.5 }}
             >
               <View style={styles.homeMarker}>
-                <AppText style={styles.homeMarkerText}>🏠</AppText>
+                <Icon name="home" size={22} color="#2F855A" style={styles.homeMarkerText} />
               </View>
             </Marker>
 
@@ -444,7 +440,7 @@ export default function DashboardScreen({ navigation }: any) {
                         resizeMode="cover"
                       />
                     ) : (
-                      <AppText style={styles.mapPetMarkerFallback}>🐱</AppText>
+                      <Icon name="cat" size={26} color="#D69E2E" style={styles.petAvatarFallback} />
                     )}
                   </View>
                 </Marker>
@@ -537,7 +533,7 @@ export default function DashboardScreen({ navigation }: any) {
                   {p.avatarBase64 ? (
                     <Image source={{ uri: p.avatarBase64 }} style={styles.modalAvatarImage} />
                   ) : (
-                    <AppText style={styles.modalAvatarText}>🐱</AppText>
+                    <Icon name="cat" size={26} color="#D69E2E" style={styles.petAvatarFallback} />
                   )}
                 </View>
 
@@ -548,7 +544,7 @@ export default function DashboardScreen({ navigation }: any) {
                   </AppText>
                 </View>
 
-                {selected ? <AppText style={styles.modalCheck}>✓</AppText> : null}
+                {selected ? ( <Icon name="check" style={styles.modalCheck} />) : null}
               </TouchableOpacity>
             );
           })}
@@ -577,9 +573,8 @@ const styles = StyleSheet.create({
     borderBottomColor: "rgba(255,255,255,0.25)",
   },
   headerRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  paw: { fontSize: 20, color: "#111" },
+  paw: { fontSize: 25, color: "#D69E2E" },
   headerTitle: { color: "#fff" },
-
   content: { flex: 1, padding: spacing.md },
 
   petCard: {
@@ -613,7 +608,7 @@ const styles = StyleSheet.create({
 
   petNameText: { ...typography.subheading, color: "#2b4b1f" },
   petSubText: { ...typography.body, color: "rgba(0,0,0,0.55)", marginTop: 2 },
-  chevron: { fontSize: 20, color: "rgba(0,0,0,0.55)", marginLeft: spacing.sm },
+  chevron: {marginLeft: spacing.sm },
 
   mapWrap: {
     height: 330,
@@ -690,7 +685,7 @@ const styles = StyleSheet.create({
   openMapBtn: {
     backgroundColor: "rgba(255,255,255,0.92)",
     borderRadius: 18,
-    paddingVertical: 14,
+    paddingVertical: 8,
     alignItems: "center",
   },
   openMapText: { ...typography.body, color: "#111", fontWeight: "900" },
@@ -707,7 +702,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "rgba(0,0,0,0.15)",
   },
-  homeMarkerText: { fontSize: 18 },
+  homeMarkerText: { fontSize: 25 },
 
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
   modalSheet: {
@@ -746,7 +741,7 @@ const styles = StyleSheet.create({
   modalAvatarText: { fontSize: 18 },
   modalName: { ...typography.subheading, color: "#111" },
   modalSub: { ...typography.body, color: "rgba(0,0,0,0.55)", marginTop: 2 },
-  modalCheck: { fontSize: 18, fontWeight: "900", color: GREEN },
+  modalCheck: {fontSize: 20, fontWeight: "900", color: GREEN },
 
   modalClose: {
     borderRadius: 14,
@@ -756,4 +751,12 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   modalCloseText: { ...typography.subheading, color: "#111" },
+    iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#D69E2E",
+    alignItems: "center",
+    justifyContent: "center"
+  },
 });

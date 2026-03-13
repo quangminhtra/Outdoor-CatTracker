@@ -8,8 +8,7 @@ import {
   Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { collection, doc, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
-
+import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { auth, db } from "../../config/firebase";
 import { spacing } from "../../theme";
 import AppText from "../../components/ui/AppText";
@@ -50,28 +49,7 @@ export default function ManagePetsScreen({ navigation }: any) {
     return () => unsub();
   }, [uid]);
 
-  async function addDemoPet() {
-    if (!uid) return;
-
-    const petId = `pet_${Date.now()}`;
-    await setDoc(doc(db, "users", uid, "pets", petId), {
-      name: "New Pet",
-      breed: "—",
-      colorPattern: "—",
-      deviceId: "DEMO-DEVICE",
-      avatarBase64: "",
-      geofence: { center: { lat: 43.6577, lng: -79.3792 }, radiusMeters: 120 },
-      prefs: { notifyExit: true, notifyReturn: true },
-      lastLocation: {
-        lat: 43.6577,
-        lng: -79.3792,
-        timestamp: Math.floor(Date.now() / 1000),
-      },
-    });
-
-    await updateDoc(doc(db, "users", uid), { activePetId: petId });
-  }
-
+ 
   async function openPet(petId: string) {
     if (!uid) return;
     await updateDoc(doc(db, "users", uid), { activePetId: petId });
@@ -97,10 +75,6 @@ export default function ManagePetsScreen({ navigation }: any) {
 
       <SafeAreaView edges={["bottom"]} style={styles.contentSafe}>
         <View style={styles.container}>
-          <Button title="Add Demo Pet" onPress={addDemoPet} />
-
-          <View style={{ height: spacing.md }} />
-
           {loading ? (
             <View style={styles.center}>
               <ActivityIndicator />

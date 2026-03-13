@@ -10,6 +10,7 @@ import { useUserLocation } from "../../hooks/useUserLocation";
 
 import AppText from "../../components/ui/AppText";
 import Button from "../../components/ui/Button";
+import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 
 type Geofence = {
   center: { lat: number; lng: number };
@@ -154,11 +155,6 @@ const [advancedOpen, setAdvancedOpen] = useState(false);
     return () => unsub();
   }, [uid, activePetId]);
 
-  const lastUpdatedText = useMemo(() => {
-    if (!lastTs) return "—";
-    return new Date(lastTs * 1000).toLocaleString();
-  }, [lastTs]);
-
   async function setHomeToMyLocation() {
     if (!uid || !activePetId || !userLocation) return;
 
@@ -292,7 +288,7 @@ async function toggleAdvanced(key: "notifyExit" | "notifyReturn", value: boolean
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <View style={styles.iconCircle}>
-            <AppText style={styles.iconText}>🐾</AppText>
+            <Icon name="paw" size={24} color="#333" />
           </View>
           <AppText variant="heading" style={styles.headerTitle}>
             Settings
@@ -314,7 +310,7 @@ async function toggleAdvanced(key: "notifyExit" | "notifyReturn", value: boolean
         <TouchableOpacity style={styles.rowCard} onPress={onProfilePress} activeOpacity={0.85}>
           <View style={styles.rowLeft}>
             <View style={styles.smallIconCircle}>
-              <AppText style={styles.iconTextSmall}>👤</AppText>
+              <Icon name="account" size={24} color="#333" />
             </View>
             <View>
               <AppText style={styles.rowTitle}>{userName}</AppText>
@@ -334,7 +330,7 @@ async function toggleAdvanced(key: "notifyExit" | "notifyReturn", value: boolean
         <TouchableOpacity style={styles.rowCard} onPress={onManagePetsPress} activeOpacity={0.85}>
           <View style={styles.rowLeft}>
             <View style={styles.smallIconCircle}>
-              <AppText style={styles.iconTextSmall}>🐱</AppText>
+              <Icon name="cat" size={24} color="#333" />
             </View>
             <View>
               <AppText style={styles.rowTitle}>Manage pets</AppText>
@@ -363,12 +359,6 @@ async function toggleAdvanced(key: "notifyExit" | "notifyReturn", value: boolean
           </AppText>
 
           <View style={{ height: spacing.sm }} />
-
-          <AppText color="textSecondary">
-            Last update: {lastUpdatedText}
-          </AppText>
-
-          <View style={{ height: spacing.md }} />
 
           <AppText color="textSecondary">
             Home: {geofence.center.lat.toFixed(5)}, {geofence.center.lng.toFixed(5)}
@@ -420,9 +410,16 @@ async function toggleAdvanced(key: "notifyExit" | "notifyReturn", value: boolean
   onPress={() => setAdvancedOpen((v) => !v)}
   activeOpacity={0.85}
 >
+<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
   <AppText variant="heading" style={styles.advancedText}>
-    Advanced {advancedOpen ? "▲" : "▼"}
+    Advanced
   </AppText>
+
+  <Icon name={advancedOpen ? "chevron-up" : "chevron-down"}
+  size={22}
+  color="white"/>
+
+</View>
 </TouchableOpacity>
 
 {advancedOpen ? (
@@ -516,11 +513,10 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "#D69E2E",
     alignItems: "center",
     justifyContent: "center"
   },
-  iconText: { fontSize: 22 },
   headerTitle: { color: "#fff" },
 
   content: {
@@ -578,7 +574,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
-  iconTextSmall: { fontSize: 18 },
 
   rowTitle: {
     color: "#111",

@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
   KeyboardAvoidingView,
-  Platform
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AppText from "../../components/ui/AppText";
@@ -105,20 +105,17 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     justifyContent: "center",
-    padding: spacing.lg
+    padding: spacing.lg,
   },
 
-  // Keeps everything grouped (so it doesn't stretch weirdly)
   card: {
-    width: "100%"
+    width: "100%",
   },
-
   h1: {
     fontSize: 34,
     fontWeight: "900",
     color: "#111",
-    marginBottom: spacing.lg
-    // removed marginTop so it doesn't sit too high
+    marginBottom: spacing.lg,
   },
   label: {
     fontSize: 14,
@@ -148,7 +145,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "center",
-    paddingHorizontal: 48
+    paddingHorizontal: 48,
   },
   ctaText: { color: "#fff", fontSize: 16, fontWeight: "900" },
 

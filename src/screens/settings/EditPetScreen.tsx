@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   View,
   StyleSheet,
@@ -17,10 +17,26 @@ import { spacing } from "../../theme";
 import AppText from "../../components/ui/AppText";
 import Button from "../../components/ui/Button";
 import ScreenHeader from "../../components/ui/ScreenHeader";
+import { createPetForCurrentUser } from "../../services/petAccountService";
+import { useUserLocation } from "../../hooks/useUserLocation";
+
+type EditPetRouteParams =
+  | {
+      mode: "create";
+      deviceId: string;
+    }
+  | {
+      mode?: "edit";
+      petId: string;
+    };
 
 export default function EditPetScreen({ route, navigation }: any) {
   const uid = auth.currentUser?.uid;
-  const { petId } = route.params as { petId: string };
+  const params = route.params as EditPetRouteParams;
+  const isCreateMode = params.mode === "create";
+  const petId = "petId" in params ? params.petId : null;
+  const verifiedDeviceId = params.mode === "create" ? params.deviceId : null;
+  const { location: userLocation } = useUserLocation();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -34,7 +50,21 @@ export default function EditPetScreen({ route, navigation }: any) {
 
   useEffect(() => {
     async function load() {
-      if (!uid) return;
+      if (!uid) {
+        setLoading(false);
+        return;
+      }
+
+      if (isCreateMode) {
+        setDeviceId(verifiedDeviceId ?? "");
+        setLoading(false);
+        return;
+      }
+
+      if (!petId) {
+        setLoading(false);
+        return;
+      }
 
       try {
         const snap = await getDoc(doc(db, "users", uid, "pets", petId));
@@ -58,12 +88,15 @@ export default function EditPetScreen({ route, navigation }: any) {
     }
 
     load();
-  }, [uid, petId]);
+  }, [uid, petId, isCreateMode, verifiedDeviceId]);
+
+  const screenTitle = useMemo(() => {
+    return isCreateMode ? "Add Pet" : "Edit Pet";
+  }, [isCreateMode]);
 
   async function handleChangeAvatar() {
     try {
-      const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (!permission.granted) {
         Alert.alert("Permission Required", "Please allow photo access first.");
@@ -90,7 +123,7 @@ export default function EditPetScreen({ route, navigation }: any) {
 
       setUploadingAvatar(true);
 
-      if (uid) {
+      if (uid && petId && !isCreateMode) {
         await updateDoc(doc(db, "users", uid, "pets", petId), {
           avatarBase64: imageData,
         });
@@ -111,7 +144,6 @@ export default function EditPetScreen({ route, navigation }: any) {
     const trimmedName = name.trim();
     const trimmedBreed = breed.trim();
     const trimmedColorPattern = colorPattern.trim();
-    const trimmedDeviceId = deviceId.trim();
 
     if (!trimmedName) {
       Alert.alert("Missing Name", "Please enter a pet name.");
@@ -121,17 +153,42 @@ export default function EditPetScreen({ route, navigation }: any) {
     try {
       setSaving(true);
 
+      if (isCreateMode) {
+        const newPetId = await createPetForCurrentUser(uid, {
+          deviceId,
+          name: trimmedName,
+          breed: trimmedBreed,
+          colorPattern: trimmedColorPattern,
+          avatarBase64,
+          makeActive: true,
+          geofenceCenter: userLocation
+            ? { lat: userLocation.latitude, lng: userLocation.longitude }
+            : undefined,
+        });
+
+        navigation.replace("PetDetails", { petId: newPetId });
+        return;
+      }
+
+      if (!petId) {
+        throw new Error("Missing pet ID.");
+      }
+
       await updateDoc(doc(db, "users", uid, "pets", petId), {
         name: trimmedName,
         breed: trimmedBreed,
         colorPattern: trimmedColorPattern,
-        deviceId: trimmedDeviceId,
+        avatarBase64,
+        updatedAtMs: Date.now(),
       });
 
       navigation.goBack();
     } catch (err) {
       console.log("Save pet failed", err);
-      Alert.alert("Error", "Could not save pet changes.");
+      Alert.alert(
+        "Error",
+        err instanceof Error ? err.message : "Could not save pet changes."
+      );
     } finally {
       setSaving(false);
     }
@@ -140,7 +197,7 @@ export default function EditPetScreen({ route, navigation }: any) {
   if (!uid) {
     return (
       <View style={styles.page}>
-        <ScreenHeader title="Edit Pet" onBack={() => navigation.goBack()} />
+        <ScreenHeader title={screenTitle} onBack={() => navigation.goBack()} />
         <View style={styles.center}>
           <AppText variant="subheading" style={{ color: "#111" }}>
             Not logged in
@@ -152,14 +209,14 @@ export default function EditPetScreen({ route, navigation }: any) {
 
   return (
     <View style={styles.page}>
-      <ScreenHeader title="Edit Pet" onBack={() => navigation.goBack()} />
+      <ScreenHeader title={screenTitle} onBack={() => navigation.goBack()} />
 
       <SafeAreaView edges={["bottom"]} style={styles.contentSafe}>
         <View style={styles.container}>
           {loading ? (
             <View style={styles.center}>
               <ActivityIndicator />
-              <AppText style={styles.muted}>Loading…</AppText>
+              <AppText style={styles.muted}>Loading...</AppText>
             </View>
           ) : (
             <>
@@ -171,13 +228,10 @@ export default function EditPetScreen({ route, navigation }: any) {
                   disabled={uploadingAvatar}
                 >
                   {avatarBase64 ? (
-                    <Image
-                      source={{ uri: avatarBase64 }}
-                      style={styles.avatarImage}
-                    />
+                    <Image source={{ uri: avatarBase64 }} style={styles.avatarImage} />
                   ) : (
                     <View style={styles.avatarFallback}>
-                      <AppText style={styles.avatarFallbackText}>🐱</AppText>
+                      <AppText style={styles.avatarFallbackText}>Cat</AppText>
                     </View>
                   )}
 
@@ -241,18 +295,21 @@ export default function EditPetScreen({ route, navigation }: any) {
                 <AppText style={styles.label}>Device ID</AppText>
                 <TextInput
                   value={deviceId}
-                  onChangeText={setDeviceId}
+                  editable={false}
                   style={styles.input}
-                  placeholder="GPS module ID"
+                  placeholder="RAK-001"
                   placeholderTextColor="rgba(0,0,0,0.35)"
-                  autoCapitalize="characters"
                 />
+
+                <AppText style={styles.helperText}>
+                  Device IDs are assigned through the verification flow and cannot be edited here.
+                </AppText>
               </View>
 
               <View style={{ height: spacing.lg }} />
 
               <Button
-                title={saving ? "Saving…" : "Save your changes"}
+                title={saving ? "Saving..." : isCreateMode ? "Create Pet" : "Save your changes"}
                 onPress={save}
                 disabled={saving || uploadingAvatar}
               />
@@ -350,6 +407,10 @@ const styles = StyleSheet.create({
     color: "#111",
     fontWeight: "800",
     marginBottom: spacing.sm,
+  },
+  helperText: {
+    color: "rgba(0,0,0,0.55)",
+    marginTop: spacing.sm,
   },
   input: {
     backgroundColor: "rgba(0,0,0,0.05)",

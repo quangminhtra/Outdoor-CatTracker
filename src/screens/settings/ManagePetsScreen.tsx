@@ -8,24 +8,41 @@ import {
   Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { collection, doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "../../config/firebase";
 import { spacing } from "../../theme";
 import AppText from "../../components/ui/AppText";
 import Button from "../../components/ui/Button";
 import ScreenHeader from "../../components/ui/ScreenHeader";
+import { setActivePetForCurrentUser } from "../../services/petAccountService";
+import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 
 type Pet = {
   id: string;
   name: string;
   deviceId: string;
+  breed?: string;
   avatarBase64?: string;
+  isActive: boolean;
 };
 
 export default function ManagePetsScreen({ navigation }: any) {
   const uid = auth.currentUser?.uid;
   const [pets, setPets] = useState<Pet[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activePetId, setActivePetId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!uid) return;
+
+    const userRef = doc(db, "users", uid);
+    const unsub = onSnapshot(userRef, (snap) => {
+      const data = snap.data() as { activePetId?: string } | undefined;
+      setActivePetId(typeof data?.activePetId === "string" ? data.activePetId : null);
+    });
+
+    return () => unsub();
+  }, [uid]);
 
   useEffect(() => {
     if (!uid) return;
@@ -37,9 +54,11 @@ export default function ManagePetsScreen({ navigation }: any) {
         return {
           id: d.id,
           name: typeof data.name === "string" ? data.name : "Unnamed pet",
-          deviceId: typeof data.deviceId === "string" ? data.deviceId : "—",
+          deviceId: typeof data.deviceId === "string" ? data.deviceId : "-",
+          breed: typeof data.breed === "string" ? data.breed : undefined,
           avatarBase64:
             typeof data.avatarBase64 === "string" ? data.avatarBase64 : undefined,
+          isActive: d.id === activePetId,
         };
       });
       setPets(list);
@@ -47,13 +66,15 @@ export default function ManagePetsScreen({ navigation }: any) {
     });
 
     return () => unsub();
-  }, [uid]);
+  }, [uid, activePetId]);
 
- 
-  async function openPet(petId: string) {
-    if (!uid) return;
-    await updateDoc(doc(db, "users", uid), { activePetId: petId });
+  function openPet(petId: string) {
     navigation.navigate("PetDetails", { petId });
+  }
+
+  async function setAsActive(petId: string) {
+    if (!uid) return;
+    await setActivePetForCurrentUser(uid, petId);
   }
 
   if (!uid) {
@@ -75,10 +96,17 @@ export default function ManagePetsScreen({ navigation }: any) {
 
       <SafeAreaView edges={["bottom"]} style={styles.contentSafe}>
         <View style={styles.container}>
+          <Button
+            title="Add Another Pet"
+            onPress={() => navigation.navigate("VerifyPetId")}
+          />
+
+          <View style={{ height: spacing.md }} />
+
           {loading ? (
             <View style={styles.center}>
               <ActivityIndicator />
-              <AppText style={styles.muted}>(Loading pets…)</AppText>
+              <AppText style={styles.muted}>(Loading pets...)</AppText>
             </View>
           ) : (
             <FlatList
@@ -99,19 +127,57 @@ export default function ManagePetsScreen({ navigation }: any) {
                       />
                     ) : (
                       <View style={styles.avatarFallback}>
-                        <AppText style={styles.avatarFallbackText}>🐱</AppText>
+                        <AppText style={styles.avatarFallbackText}>Cat</AppText>
                       </View>
                     )}
 
                     <View style={{ flex: 1 }}>
-                      <AppText style={styles.petName}>{item.name}</AppText>
+                      <View style={styles.titleRow}>
+                        <AppText style={styles.petName}>{item.name}</AppText>
+                      </View>
+
                       <AppText style={styles.subText}>
                         Device ID: {item.deviceId}
+                      </AppText>
+                      <AppText style={styles.subText}>
+                        {item.breed || "Breed not set"}
                       </AppText>
                     </View>
                   </View>
 
-                  <AppText style={styles.chev}>›</AppText>
+                  <View style={styles.rowActions}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (!item.isActive) {
+                          setAsActive(item.id);
+                        }
+                      }}
+                      style={[
+                        styles.statusPill,
+                        item.isActive ? styles.statusPillActive : styles.statusPillInactive,
+                        !item.isActive && styles.statusPillPressable,
+                      ]}
+                      activeOpacity={item.isActive ? 1 : 0.85}
+                    >
+                      <Icon
+                        name={item.isActive ? "check-circle" : "close-circle"}
+                        size={16}
+                        color={item.isActive ? "#2F855A" : "#C62828"}
+                      />
+                      <AppText
+                        style={[
+                          styles.statusPillText,
+                          item.isActive
+                            ? styles.statusPillTextActive
+                            : styles.statusPillTextInactive,
+                        ]}
+                      >
+                        {item.isActive ? "Active" : "Inactive"}
+                      </AppText>
+                    </TouchableOpacity>
+
+                    <Icon name="chevron-right" size={24} color="rgba(0,0,0,0.35)" />
+                  </View>
                 </TouchableOpacity>
               )}
               ListEmptyComponent={
@@ -148,7 +214,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     color: "rgba(0,0,0,0.6)",
   },
-
   row: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -164,20 +229,17 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 3,
   },
-
   rowLeft: {
     flexDirection: "row",
     alignItems: "center",
     flex: 1,
   },
-
   avatarImage: {
     width: 52,
     height: 52,
     borderRadius: 16,
     marginRight: spacing.md,
   },
-
   avatarFallback: {
     width: 52,
     height: 52,
@@ -187,24 +249,53 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: spacing.md,
   },
-
   avatarFallbackText: {
     fontSize: 22,
   },
-
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   petName: {
     fontWeight: "900",
     color: "#111",
   },
-
   subText: {
     color: "rgba(0,0,0,0.6)",
     marginTop: 2,
   },
-
-  chev: {
-    fontSize: 26,
-    color: "rgba(0,0,0,0.35)",
+  rowActions: {
+    flexDirection: "row",
+    alignItems: "center",
     marginLeft: spacing.sm,
+    gap: spacing.sm,
+    flexShrink: 0,
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  statusPillActive: {
+    backgroundColor: "rgba(47,133,90,0.14)",
+  },
+  statusPillInactive: {
+    backgroundColor: "rgba(198,40,40,0.12)",
+  },
+  statusPillPressable: {
+    borderWidth: 1,
+    borderColor: "rgba(198,40,40,0.18)",
+  },
+  statusPillText: {
+    fontWeight: "800",
+  },
+  statusPillTextActive: {
+    color: "#2F855A",
+  },
+  statusPillTextInactive: {
+    color: "#C62828",
   },
 });

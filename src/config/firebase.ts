@@ -6,6 +6,7 @@ import {
   type Persistence,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLxpRsZg1QVzn877qOyibWVa7Y62m3dw8",
@@ -39,3 +40,4 @@ export const auth = (() => {
 })();
 
 export const db = getFirestore(app);
+export const storage = getStorage(app);

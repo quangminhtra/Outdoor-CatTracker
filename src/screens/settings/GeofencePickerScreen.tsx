@@ -2,12 +2,11 @@ import { useMemo, useRef, useState } from "react";
 import { View, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import MapView, { Marker, Region, LongPressEvent } from "react-native-maps";
-import { doc, updateDoc } from "firebase/firestore";
-
-import { auth, db } from "../../config/firebase";
+import { auth } from "../../config/firebase";
 import { spacing } from "../../theme";
 import AppText from "../../components/ui/AppText";
 import ScreenHeader from "../../components/ui/ScreenHeader";
+import { updateHomebaseForAllPets } from "../../services/petAccountService";
 
 type Center = { lat: number; lng: number };
 
@@ -43,9 +42,9 @@ export default function GeofencePickerScreen({ route, navigation }: any) {
     try {
       setSaving(true);
 
-      await updateDoc(doc(db, "users", uid, "pets", petId), {
-        "geofence.center": { lat: selected.lat, lng: selected.lng },
-        "geofence.radiusMeters": radiusMeters
+      await updateHomebaseForAllPets(uid, {
+        center: { lat: selected.lat, lng: selected.lng },
+        radiusMeters,
       });
 
       navigation.goBack();

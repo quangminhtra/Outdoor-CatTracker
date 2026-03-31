@@ -43,6 +43,15 @@ type ApiPing = {
   serverTimeMs: number | null;
 };
 
+type DeviceDoc = {
+  lastLocation?: {
+    lat?: number;
+    lng?: number;
+    timestamp?: number;
+    lastSeen?: number;
+  };
+};
+
 const GREEN = "#5E8F3C";
 const YELLOW = "#F4D35E";
 
@@ -56,7 +65,8 @@ function isValidLatLng(lat: number, lng: number) {
     lat >= -90 &&
     lat <= 90 &&
     lng >= -180 &&
-    lng <= 180
+    lng <= 180 &&
+    !(lat === 0 && lng === 0)
   );
 }
 
@@ -81,6 +91,7 @@ async function fetchLatestPing(deviceId: string): Promise<ApiPing> {
 export default function DashboardScreen({ navigation }: any) {
   const uid = auth.currentUser?.uid;
   const mapRef = useRef<MapView>(null);
+  const hasValidApiLocationRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [activePetId, setActivePetId] = useState<string | null>(null);
@@ -97,6 +108,7 @@ export default function DashboardScreen({ navigation }: any) {
     center: { lat: 43.6577, lng: -79.3792 },
     radiusMeters: 120,
   });
+  const [sharedGeofence, setSharedGeofence] = useState<Geofence | null>(null);
 
   const [deviceLoc, setDeviceLoc] = useState<LatLng | null>(null);
   const [lastSeenMs, setLastSeenMs] = useState<number | null>(null);
@@ -115,6 +127,18 @@ export default function DashboardScreen({ navigation }: any) {
     const unsub = onSnapshot(userRef, (snap) => {
       const data = snap.data() as any;
       setActivePetId(typeof data?.activePetId === "string" ? data.activePetId : null);
+
+      const shared = data?.sharedGeofence;
+      if (
+        shared?.center &&
+        typeof shared.center.lat === "number" &&
+        typeof shared.center.lng === "number" &&
+        typeof shared.radiusMeters === "number"
+      ) {
+        setSharedGeofence(shared);
+      } else {
+        setSharedGeofence(null);
+      }
     });
 
     return () => unsub();
@@ -145,7 +169,19 @@ export default function DashboardScreen({ navigation }: any) {
   }, [uid]);
 
   useEffect(() => {
-    if (!uid || !activePetId) return;
+    if (!uid) return;
+
+    if (!activePetId) {
+      setLoading(false);
+      setPetName("-");
+      setPetBreed(undefined);
+      setDeviceId(null);
+      setAvatarBase64("");
+      setDeviceLoc(null);
+      setLastSeenMs(null);
+      setLastTsMs(null);
+      return;
+    }
 
     setLoading(true);
 
@@ -174,6 +210,7 @@ export default function DashboardScreen({ navigation }: any) {
 
       const gf = data.geofence;
       if (
+        !sharedGeofence &&
         gf?.center &&
         typeof gf.center.lat === "number" &&
         typeof gf.center.lng === "number" &&
@@ -186,12 +223,15 @@ export default function DashboardScreen({ navigation }: any) {
     });
 
     return () => unsub();
-  }, [uid, activePetId]);
+  }, [uid, activePetId, sharedGeofence]);
+
+  const effectiveGeofence = sharedGeofence ?? geofence;
 
   useEffect(() => {
     setDeviceLoc(null);
     setLastSeenMs(null);
     setLastTsMs(null);
+    hasValidApiLocationRef.current = false;
 
     if (!deviceId) return;
 
@@ -209,6 +249,7 @@ export default function DashboardScreen({ navigation }: any) {
           return;
         }
 
+        hasValidApiLocationRef.current = true;
         setDeviceLoc({ latitude: ping.lat, longitude: ping.lng });
 
         const effectiveTimeMs =
@@ -232,6 +273,48 @@ export default function DashboardScreen({ navigation }: any) {
     };
   }, [deviceId]);
 
+  useEffect(() => {
+    if (!deviceId) return;
+
+    const deviceRef = doc(db, "devices", deviceId);
+    const unsub = onSnapshot(deviceRef, (snap) => {
+      const data = snap.data() as DeviceDoc | undefined;
+      const lastLocation = data?.lastLocation;
+
+      if (
+        typeof lastLocation?.lat !== "number" ||
+        typeof lastLocation?.lng !== "number" ||
+        !isValidLatLng(lastLocation.lat, lastLocation.lng)
+      ) {
+        return;
+      }
+
+      if (hasValidApiLocationRef.current) {
+        return;
+      }
+
+      setDeviceLoc({
+        latitude: lastLocation.lat,
+        longitude: lastLocation.lng,
+      });
+
+      const rawTimestamp =
+        typeof lastLocation.timestamp === "number"
+          ? lastLocation.timestamp
+          : typeof lastLocation.lastSeen === "number"
+          ? lastLocation.lastSeen
+          : null;
+
+      if (rawTimestamp !== null) {
+        const effectiveTimeMs = rawTimestamp > 1_000_000_000_000 ? rawTimestamp : rawTimestamp * 1000;
+        setLastSeenMs(effectiveTimeMs);
+        setLastTsMs(effectiveTimeMs);
+      }
+    });
+
+    return () => unsub();
+  }, [deviceId]);
+
   const catLocation = deviceLoc;
 
   useEffect(() => {
@@ -250,10 +333,10 @@ export default function DashboardScreen({ navigation }: any) {
     return haversineMeters(
       catLocation.latitude,
       catLocation.longitude,
-      geofence.center.lat,
-      geofence.center.lng
+      effectiveGeofence.center.lat,
+      effectiveGeofence.center.lng
     );
-  }, [catLocation, geofence.center.lat, geofence.center.lng]);
+  }, [catLocation, effectiveGeofence.center.lat, effectiveGeofence.center.lng]);
 
   const distanceText = useMemo(() => {
     if (distanceMeters === null) return "—";
@@ -263,8 +346,8 @@ export default function DashboardScreen({ navigation }: any) {
 
   const safeZoneText = useMemo(() => {
     if (!catLocation || distanceMeters === null) return "—";
-    return distanceMeters <= geofence.radiusMeters ? "Inside" : "Outside";
-  }, [catLocation, distanceMeters, geofence.radiusMeters]);
+    return distanceMeters <= effectiveGeofence.radiusMeters ? "Inside" : "Outside";
+  }, [catLocation, distanceMeters, effectiveGeofence.radiusMeters]);
 
   const lastSeenText = useMemo(() => {
     const t = lastSeenMs;
@@ -281,7 +364,10 @@ export default function DashboardScreen({ navigation }: any) {
   }, [lastSeenMs]);
 
   const previewRegion: Region = useMemo(() => {
-    const home = { latitude: geofence.center.lat, longitude: geofence.center.lng };
+    const home = {
+      latitude: effectiveGeofence.center.lat,
+      longitude: effectiveGeofence.center.lng,
+    };
     const center = catLocation ?? home;
 
     return {
@@ -290,12 +376,15 @@ export default function DashboardScreen({ navigation }: any) {
       latitudeDelta: 0.02,
       longitudeDelta: 0.02,
     };
-  }, [catLocation, geofence.center.lat, geofence.center.lng]);
+  }, [catLocation, effectiveGeofence.center.lat, effectiveGeofence.center.lng]);
 
   useEffect(() => {
     if (!mapRef.current) return;
 
-    const home = { latitude: geofence.center.lat, longitude: geofence.center.lng };
+    const home = {
+      latitude: effectiveGeofence.center.lat,
+      longitude: effectiveGeofence.center.lng,
+    };
 
     if (catLocation) {
       mapRef.current.fitToCoordinates([home, catLocation], {
@@ -303,7 +392,7 @@ export default function DashboardScreen({ navigation }: any) {
         animated: true,
       });
     }
-  }, [catLocation, geofence.center.lat, geofence.center.lng]);
+  }, [catLocation, effectiveGeofence.center.lat, effectiveGeofence.center.lng]);
 
   const updatedText = useMemo(() => {
     if (!lastTsMs) return "—";
@@ -323,8 +412,14 @@ export default function DashboardScreen({ navigation }: any) {
 
   async function selectPet(petId: string) {
     if (!uid) return;
-    await updateDoc(doc(db, "users", uid), { activePetId: petId });
     setPetModalOpen(false);
+    setActivePetId(petId);
+
+    try {
+      await updateDoc(doc(db, "users", uid), { activePetId: petId });
+    } catch (err) {
+      console.log("Failed to switch active pet", err);
+    }
   }
 
   if (!uid) {
@@ -400,7 +495,10 @@ export default function DashboardScreen({ navigation }: any) {
             pointerEvents="none"
           >
             <Marker
-              coordinate={{ latitude: geofence.center.lat, longitude: geofence.center.lng }}
+              coordinate={{
+                latitude: effectiveGeofence.center.lat,
+                longitude: effectiveGeofence.center.lng,
+              }}
               title="Home"
               anchor={{ x: 0.5, y: 0.5 }}
             >
@@ -410,8 +508,11 @@ export default function DashboardScreen({ navigation }: any) {
             </Marker>
 
             <Circle
-              center={{ latitude: geofence.center.lat, longitude: geofence.center.lng }}
-              radius={geofence.radiusMeters}
+              center={{
+                latitude: effectiveGeofence.center.lat,
+                longitude: effectiveGeofence.center.lng,
+              }}
+              radius={effectiveGeofence.radiusMeters}
               strokeWidth={2}
               strokeColor="rgba(255, 255, 255, 0.9)"
               fillColor="rgba(255, 153, 0, 0.15)"
@@ -447,7 +548,10 @@ export default function DashboardScreen({ navigation }: any) {
 
                 <Polyline
                   coordinates={[
-                    { latitude: geofence.center.lat, longitude: geofence.center.lng },
+                    {
+                      latitude: effectiveGeofence.center.lat,
+                      longitude: effectiveGeofence.center.lng,
+                    },
                     catLocation,
                   ]}
                   strokeWidth={3}

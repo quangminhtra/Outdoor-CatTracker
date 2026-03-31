@@ -165,8 +165,14 @@ export default function AlertsScreen() {
 
   async function selectPet(petId: string) {
     if (!uid) return;
-    await updateDoc(doc(db, "users", uid), { activePetId: petId });
     setPetModalOpen(false);
+    setActivePetId(petId);
+
+    try {
+      await updateDoc(doc(db, "users", uid), { activePetId: petId });
+    } catch (err) {
+      console.log("Failed to switch active pet", err);
+    }
   }
 
   async function toggleNotifications(enabled: boolean) {

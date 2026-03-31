@@ -11,7 +11,7 @@ export async function createDemoPet(uid: string) {
       name: "Whiskers",
       breed: "—",
       colorPattern: "—",
-      deviceId: "DEMO-DEVICE",
+      deviceId: "RAK-001",
       avatarUrl: "",
       lastLocation: { lat: 43.6577, lng: -79.3792, timestamp: Math.floor(Date.now() / 1000) },
       geofence: { center: { lat: 43.6577, lng: -79.3792 }, radiusMeters: 120 },

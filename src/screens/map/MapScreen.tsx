@@ -55,6 +55,15 @@ type ApiPing = {
   serverTimeMs: number | null;
 };
 
+type DeviceDoc = {
+  lastLocation?: {
+    lat?: number;
+    lng?: number;
+    timestamp?: number;
+    lastSeen?: number;
+  };
+};
+
 type MuteOption = {
   label: string;
   subtitle: string;
@@ -86,7 +95,8 @@ function isValidLatLng(lat: number, lng: number) {
     lat >= -90 &&
     lat <= 90 &&
     lng >= -180 &&
-    lng <= 180
+    lng <= 180 &&
+    !(lat === 0 && lng === 0)
   );
 }
 
@@ -114,6 +124,8 @@ export default function MapScreen() {
 
   const mapRef = useRef<MapView>(null);
   const prevInsideRef = useRef<boolean | null>(null);
+  const hasValidApiLocationRef = useRef(false);
+  const autoCenterResumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const outsideTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const outsideMuteUntilRef = useRef<number | null>(null);
@@ -131,6 +143,7 @@ export default function MapScreen() {
     center: { lat: 43.6577, lng: -79.3792 },
     radiusMeters: 120,
   });
+  const [sharedGeofence, setSharedGeofence] = useState<Geofence | null>(null);
 
   const [prefs, setPrefs] = useState<Prefs>({
     notifyExit: true,
@@ -148,6 +161,7 @@ export default function MapScreen() {
   const [selectedMuteMs, setSelectedMuteMs] = useState<number>(
     OUTSIDE_MUTE_OPTIONS[2].valueMs
   );
+  const [autoCenterPaused, setAutoCenterPaused] = useState(false);
 
   const [trackMarkerViewChanges, setTrackMarkerViewChanges] = useState(true);
 
@@ -255,6 +269,19 @@ export default function MapScreen() {
     muteOutsideAlerts(selectedMuteMs);
   }, [muteOutsideAlerts, selectedMuteMs]);
 
+  const pauseAutoCenter = useCallback(() => {
+    setAutoCenterPaused(true);
+
+    if (autoCenterResumeTimeoutRef.current) {
+      clearTimeout(autoCenterResumeTimeoutRef.current);
+    }
+
+    autoCenterResumeTimeoutRef.current = setTimeout(() => {
+      setAutoCenterPaused(false);
+      autoCenterResumeTimeoutRef.current = null;
+    }, 20000);
+  }, []);
+
   const startOutsideAlertSequence = useCallback(async () => {
     if (outsideFlowActiveRef.current) return;
     if (outsideEpisodeDoneRef.current) return;
@@ -307,6 +334,18 @@ export default function MapScreen() {
     const unsub = onSnapshot(userRef, (snap) => {
       const data = snap.data() as any;
       setActivePetId(typeof data?.activePetId === "string" ? data.activePetId : null);
+
+      const shared = data?.sharedGeofence;
+      if (
+        shared?.center &&
+        typeof shared.center.lat === "number" &&
+        typeof shared.center.lng === "number" &&
+        typeof shared.radiusMeters === "number"
+      ) {
+        setSharedGeofence(shared);
+      } else {
+        setSharedGeofence(null);
+      }
     });
 
     return () => unsub();
@@ -318,6 +357,7 @@ export default function MapScreen() {
     setAvatarBase64("");
     setCatLocation(null);
     setCatTimestampMs(null);
+    hasValidApiLocationRef.current = false;
 
     prevInsideRef.current = null;
     setGeofenceEvent(null);
@@ -344,6 +384,7 @@ export default function MapScreen() {
 
       const gf = data?.geofence;
       if (
+        !sharedGeofence &&
         gf?.center &&
         typeof gf.center.lat === "number" &&
         typeof gf.center.lng === "number" &&
@@ -362,7 +403,36 @@ export default function MapScreen() {
     });
 
     return () => unsub();
-  }, [uid, activePetId, resetOutsideFlow]);
+  }, [uid, activePetId, resetOutsideFlow, sharedGeofence]);
+
+  const effectiveGeofence = sharedGeofence ?? geofence;
+
+  const focusOnLiveTracking = useCallback(() => {
+    if (!mapRef.current) return;
+
+    const home = {
+      latitude: effectiveGeofence.center.lat,
+      longitude: effectiveGeofence.center.lng,
+    };
+
+    if (catLocation) {
+      mapRef.current.fitToCoordinates([home, catLocation], {
+        edgePadding: { top: 80, right: 80, bottom: 220, left: 80 },
+        animated: true,
+      });
+      return;
+    }
+
+    mapRef.current.animateToRegion(
+      {
+        latitude: home.latitude,
+        longitude: home.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      },
+      700
+    );
+  }, [catLocation, effectiveGeofence.center.lat, effectiveGeofence.center.lng]);
 
   useEffect(() => {
     setCatLocation(null);
@@ -392,6 +462,7 @@ export default function MapScreen() {
           return;
         }
 
+        hasValidApiLocationRef.current = true;
         setCatLocation({ latitude: ping.lat, longitude: ping.lng });
 
         const effectiveTimeMs =
@@ -415,18 +486,59 @@ export default function MapScreen() {
   }, [deviceId, resetOutsideFlow]);
 
   useEffect(() => {
+    if (!deviceId) return;
+
+    const deviceRef = doc(db, "devices", deviceId);
+    const unsub = onSnapshot(deviceRef, (snap) => {
+      const data = snap.data() as DeviceDoc | undefined;
+      const lastLocation = data?.lastLocation;
+
+      if (
+        typeof lastLocation?.lat !== "number" ||
+        typeof lastLocation?.lng !== "number" ||
+        !isValidLatLng(lastLocation.lat, lastLocation.lng)
+      ) {
+        return;
+      }
+
+      if (hasValidApiLocationRef.current) {
+        return;
+      }
+
+      setCatLocation({
+        latitude: lastLocation.lat,
+        longitude: lastLocation.lng,
+      });
+
+      const rawTimestamp =
+        typeof lastLocation.timestamp === "number"
+          ? lastLocation.timestamp
+          : typeof lastLocation.lastSeen === "number"
+          ? lastLocation.lastSeen
+          : null;
+
+      if (rawTimestamp !== null) {
+        const effectiveTimeMs = rawTimestamp > 1_000_000_000_000 ? rawTimestamp : rawTimestamp * 1000;
+        setCatTimestampMs(effectiveTimeMs);
+      }
+    });
+
+    return () => unsub();
+  }, [deviceId]);
+
+  useEffect(() => {
     if (!catLocation) return;
 
     const d = haversineMeters(
       catLocation.latitude,
       catLocation.longitude,
-      geofence.center.lat,
-      geofence.center.lng
+      effectiveGeofence.center.lat,
+      effectiveGeofence.center.lng
     );
 
     setDistanceMeters(d);
 
-    const inside = d <= geofence.radiusMeters;
+    const inside = d <= effectiveGeofence.radiusMeters;
     setIsInsideGeofence(inside);
 
     const prevInside = prevInsideRef.current;
@@ -442,24 +554,17 @@ export default function MapScreen() {
     else setGeofenceEvent(null);
 
     prevInsideRef.current = inside;
-  }, [catLocation, geofence.center.lat, geofence.center.lng, geofence.radiusMeters]);
+  }, [
+    catLocation,
+    effectiveGeofence.center.lat,
+    effectiveGeofence.center.lng,
+    effectiveGeofence.radiusMeters,
+  ]);
 
   useEffect(() => {
-    const target = catLocation ?? {
-      latitude: geofence.center.lat,
-      longitude: geofence.center.lng,
-    };
-
-    mapRef.current?.animateToRegion(
-      {
-        latitude: target.latitude,
-        longitude: target.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      },
-      700
-    );
-  }, [catLocation, geofence.center.lat, geofence.center.lng]);
+    if (autoCenterPaused) return;
+    focusOnLiveTracking();
+  }, [autoCenterPaused, focusOnLiveTracking]);
 
   useEffect(() => {
     if (geofenceEvent === "EXIT") {
@@ -482,11 +587,17 @@ export default function MapScreen() {
   useEffect(() => {
     return () => {
       clearOutsideTimers();
+      if (autoCenterResumeTimeoutRef.current) {
+        clearTimeout(autoCenterResumeTimeoutRef.current);
+      }
     };
   }, [clearOutsideTimers]);
 
   const initialRegion: Region = useMemo(() => {
-    const fallback = { latitude: geofence.center.lat, longitude: geofence.center.lng };
+    const fallback = {
+      latitude: effectiveGeofence.center.lat,
+      longitude: effectiveGeofence.center.lng,
+    };
     const center = catLocation ?? fallback;
 
     return {
@@ -495,7 +606,7 @@ export default function MapScreen() {
       latitudeDelta: 0.01,
       longitudeDelta: 0.01,
     };
-  }, [catLocation, geofence.center.lat, geofence.center.lng]);
+  }, [catLocation, effectiveGeofence.center.lat, effectiveGeofence.center.lng]);
 
   const lastUpdatedText = useMemo(() => {
     if (!catTimestampMs) return "—";
@@ -539,7 +650,18 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
-      <MapView ref={mapRef} style={styles.map} initialRegion={initialRegion} showsUserLocation>
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        initialRegion={initialRegion}
+        showsUserLocation
+        onPanDrag={pauseAutoCenter}
+        onRegionChangeComplete={(_region, details) => {
+          if ((details as { isGesture?: boolean } | undefined)?.isGesture) {
+            pauseAutoCenter();
+          }
+        }}
+      >
         {catLocation && (
           <Marker
             key={`${activePetId}-${avatarBase64 ? "avatar" : "fallback"}-${catLocation.latitude}-${catLocation.longitude}`}
@@ -568,8 +690,8 @@ export default function MapScreen() {
 
         <Marker
           coordinate={{
-            latitude: geofence.center.lat,
-            longitude: geofence.center.lng,
+              latitude: effectiveGeofence.center.lat,
+              longitude: effectiveGeofence.center.lng,
           }}
           anchor={{ x: 0.5, y: 0.5 }}
         >
@@ -579,8 +701,11 @@ export default function MapScreen() {
         </Marker>
 
         <Circle
-          center={{ latitude: geofence.center.lat, longitude: geofence.center.lng }}
-          radius={geofence.radiusMeters}
+          center={{
+            latitude: effectiveGeofence.center.lat,
+            longitude: effectiveGeofence.center.lng,
+          }}
+          radius={effectiveGeofence.radiusMeters}
           strokeWidth={3}
           strokeColor={colors.accent}
           fillColor={"rgba(249, 168, 37, 0.12)"}

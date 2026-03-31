@@ -10,7 +10,6 @@ const DEEP_GREEN = "#2B4B1F";
 const ORANGE = "#F4A53A";
 const SOFT_RED = "#F6C9C3";
 const SOFT_RED_BORDER = "#E9A39A";
-const COMPASS_BLUE = "#355C9A";
 
 export default function WelcomeScreen({ navigation }: any) {
   return (
@@ -161,7 +160,7 @@ const styles = StyleSheet.create({
   },
   compassNorth: {
     top: 10,
-    color: "#D94B5A",
+    color: "#111",
   },
   compassEast: {
     right: 18,
@@ -171,7 +170,7 @@ const styles = StyleSheet.create({
   },
   compassSouth: {
     bottom: 10,
-    color: COMPASS_BLUE,
+    color: "#111",
   },
   compassWest: {
     left: 12,

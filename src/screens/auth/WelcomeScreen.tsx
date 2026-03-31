@@ -8,8 +8,8 @@ import { spacing } from "../../theme";
 const GREEN = "#88B84A";
 const DEEP_GREEN = "#2B4B1F";
 const ORANGE = "#F4A53A";
-const SOFT_RED = "#F6C9C3";
-const SOFT_RED_BORDER = "#E9A39A";
+const TAUPE = "#D4CDC3";
+const ESPRESSO = "#4A342A";
 
 export default function WelcomeScreen({ navigation }: any) {
   return (
@@ -115,7 +115,7 @@ const styles = StyleSheet.create({
   logoBadge: {
     width: 186,
     height: 186,
-    backgroundColor: SOFT_RED,
+    backgroundColor: TAUPE,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
@@ -123,7 +123,7 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     elevation: 8,
     borderWidth: 4,
-    borderColor: SOFT_RED_BORDER,
+    borderColor: ESPRESSO,
     borderRadius: 36,
     transform: [{ rotate: "45deg" }],
   },
@@ -146,7 +146,7 @@ const styles = StyleSheet.create({
     height: 146,
     borderRadius: 73,
     borderWidth: 5,
-    borderColor: SOFT_RED_BORDER,
+    borderColor: ESPRESSO,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
@@ -160,23 +160,23 @@ const styles = StyleSheet.create({
   },
   compassNorth: {
     top: 10,
-    color: "#111",
+    color: "#FFFFFF",
   },
   compassEast: {
     right: 18,
     top: "50%",
     marginTop: -10,
-    color: "#111",
+    color: "#FFFFFF",
   },
   compassSouth: {
     bottom: 10,
-    color: "#111",
+    color: "#FFFFFF",
   },
   compassWest: {
     left: 12,
     top: "50%",
     marginTop: -10,
-    color: "#111",
+    color: "#FFFFFF",
   },
   logo: {
     width: 116,

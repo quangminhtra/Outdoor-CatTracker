@@ -577,12 +577,11 @@ export default function MapScreen() {
 
     resetOutsideFlow();
 
-    if (prefs.notifyReturn) {
-      sendGeofenceReturnNotification();
-    }
-
-    logAlert("GEOFENCE_RETURN");
-  }, [geofenceEvent, logAlert, prefs.notifyReturn, resetOutsideFlow]);
+    void (async () => {
+      await sendGeofenceReturnNotification();
+      await logAlert("GEOFENCE_RETURN");
+    })();
+  }, [geofenceEvent, logAlert, resetOutsideFlow]);
 
   useEffect(() => {
     return () => {
@@ -655,6 +654,7 @@ export default function MapScreen() {
         style={styles.map}
         initialRegion={initialRegion}
         showsUserLocation
+        onTouchStart={pauseAutoCenter}
         onPanDrag={pauseAutoCenter}
         onRegionChangeComplete={(_region, details) => {
           if ((details as { isGesture?: boolean } | undefined)?.isGesture) {

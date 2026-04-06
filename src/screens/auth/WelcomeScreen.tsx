@@ -10,6 +10,7 @@ const DEEP_GREEN = "#2B4B1F";
 const ORANGE = "#F4A53A";
 const TAUPE = "#D4CDC3";
 const ESPRESSO = "#4A342A";
+const PURE_WHITE = "#ffffff";
 
 export default function WelcomeScreen({ navigation }: any) {
   return (
@@ -124,7 +125,7 @@ const styles = StyleSheet.create({
     elevation: 8,
     borderWidth: 4,
     borderColor: ESPRESSO,
-    borderRadius: 36,
+    borderRadius: 18,
     transform: [{ rotate: "45deg" }],
   },
   logoBadgeInner: {
@@ -145,7 +146,7 @@ const styles = StyleSheet.create({
     width: 146,
     height: 146,
     borderRadius: 73,
-    borderWidth: 5,
+    borderWidth: 3,
     borderColor: ESPRESSO,
     alignItems: "center",
     justifyContent: "center",
@@ -159,24 +160,24 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   compassNorth: {
-    top: 10,
-    color: "#FFFFFF",
+    top: -6,
+    color: PURE_WHITE,
   },
   compassEast: {
-    right: 18,
+    right: -4,
     top: "50%",
     marginTop: -10,
-    color: "#FFFFFF",
+    color: PURE_WHITE,
   },
   compassSouth: {
-    bottom: 10,
-    color: "#FFFFFF",
+    bottom: -6,
+    color: PURE_WHITE,
   },
   compassWest: {
-    left: 12,
+    left: -6,
     top: "50%",
     marginTop: -10,
-    color: "#FFFFFF",
+    color: PURE_WHITE,
   },
   logo: {
     width: 116,

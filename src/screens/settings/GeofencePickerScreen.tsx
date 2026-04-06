@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from "react";
-import { View, StyleSheet, TouchableOpacity } from "react-native";
+import { View, StyleSheet, TouchableOpacity, TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import MapView, { Marker, Region, LongPressEvent } from "react-native-maps";
+import * as Location from "expo-location";
 import { auth } from "../../config/firebase";
 import { spacing } from "../../theme";
 import AppText from "../../components/ui/AppText";
@@ -20,6 +21,9 @@ export default function GeofencePickerScreen({ route, navigation }: any) {
   const mapRef = useRef<MapView>(null);
   const [selected, setSelected] = useState<Center>(center);
   const [saving, setSaving] = useState(false);
+  const [address, setAddress] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
   const initialRegion: Region = useMemo(() => {
     return {
@@ -33,6 +37,49 @@ export default function GeofencePickerScreen({ route, navigation }: any) {
   function onLongPress(e: LongPressEvent) {
     const { latitude, longitude } = e.nativeEvent.coordinate;
     setSelected({ lat: latitude, lng: longitude });
+    setSearchError("");
+  }
+
+  async function searchAddress() {
+    const trimmed = address.trim();
+    if (!trimmed) {
+      setSearchError("Enter an address to search.");
+      return;
+    }
+
+    try {
+      setSearching(true);
+      setSearchError("");
+
+      const results = await Location.geocodeAsync(trimmed);
+      const first = results[0];
+
+      if (!first) {
+        setSearchError("Address not found. Try a more specific address.");
+        return;
+      }
+
+      const nextCenter = {
+        lat: first.latitude,
+        lng: first.longitude,
+      };
+
+      setSelected(nextCenter);
+
+      mapRef.current?.animateToRegion(
+        {
+          latitude: nextCenter.lat,
+          longitude: nextCenter.lng,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        },
+        700
+      );
+    } catch (_error) {
+      setSearchError("Could not search that address right now.");
+    } finally {
+      setSearching(false);
+    }
   }
 
   async function save() {
@@ -78,8 +125,37 @@ export default function GeofencePickerScreen({ route, navigation }: any) {
             <AppText style={styles.title}>Pick Home on Map</AppText>
 
             <AppText style={styles.line}>
-              Long-press anywhere to set the safe zone center.
+              Search an address or long-press on the map to set the safe zone center.
             </AppText>
+
+            <View style={{ height: spacing.md }} />
+
+            <TextInput
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Search address"
+              placeholderTextColor="rgba(0,0,0,0.35)"
+              style={styles.input}
+              autoCapitalize="words"
+              autoCorrect={false}
+              returnKeyType="search"
+              onSubmitEditing={searchAddress}
+            />
+
+            {searchError ? <AppText style={styles.errorText}>{searchError}</AppText> : null}
+
+            <View style={{ height: spacing.sm }} />
+
+            <TouchableOpacity
+              style={styles.searchBtn}
+              onPress={searchAddress}
+              activeOpacity={0.85}
+              disabled={searching}
+            >
+              <AppText style={styles.searchBtnText}>
+                {searching ? "Searching..." : "Search Address"}
+              </AppText>
+            </TouchableOpacity>
 
             <AppText style={styles.line}>
               Selected: {selected.lat.toFixed(5)}, {selected.lng.toFixed(5)}
@@ -156,6 +232,31 @@ const styles = StyleSheet.create({
   line: {
     color: "rgba(0,0,0,0.65)",
     marginTop: spacing.xs
+  },
+  input: {
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: "#F7F7F7",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
+    paddingHorizontal: 14,
+    color: "#111",
+  },
+  errorText: {
+    marginTop: spacing.xs,
+    color: "#C62828",
+    fontWeight: "700",
+  },
+  searchBtn: {
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+    backgroundColor: "rgba(46,125,50,0.12)",
+    marginBottom: spacing.xs,
+  },
+  searchBtnText: {
+    color: "#2e7d32",
+    fontWeight: "900",
   },
 
   row: {

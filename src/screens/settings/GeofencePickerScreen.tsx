@@ -1,5 +1,13 @@
 import { useMemo, useRef, useState } from "react";
-import { View, StyleSheet, TouchableOpacity, TextInput } from "react-native";
+import {
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import MapView, { Marker, Region, LongPressEvent } from "react-native-maps";
 import * as Location from "expo-location";
@@ -121,7 +129,16 @@ export default function GeofencePickerScreen({ route, navigation }: any) {
 
         {/* Bottom overlay card */}
         <SafeAreaView edges={["bottom"]} style={styles.overlaySafe}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
+          >
           <View style={styles.overlay}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.overlayContent}
+            >
             <AppText style={styles.title}>Pick Home on Map</AppText>
 
             <AppText style={styles.line}>
@@ -182,7 +199,9 @@ export default function GeofencePickerScreen({ route, navigation }: any) {
                 <AppText style={styles.btnText}>{saving ? "Saving…" : "Save"}</AppText>
               </TouchableOpacity>
             </View>
+            </ScrollView>
           </View>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </View>
     </View>
@@ -220,7 +239,11 @@ const styles = StyleSheet.create({
     shadowColor: "#000",
     shadowOpacity: 0.12,
     shadowRadius: 10,
-    elevation: 6
+    elevation: 6,
+    maxHeight: "58%",
+  },
+  overlayContent: {
+    paddingBottom: spacing.xs,
   },
 
   title: {

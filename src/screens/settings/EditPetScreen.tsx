@@ -7,6 +7,9 @@ import {
   TouchableOpacity,
   Image,
   Alert,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -212,7 +215,17 @@ export default function EditPetScreen({ route, navigation }: any) {
       <ScreenHeader title={screenTitle} onBack={() => navigation.goBack()} />
 
       <SafeAreaView edges={["bottom"]} style={styles.contentSafe}>
-        <View style={styles.container}>
+        <KeyboardAvoidingView
+          style={styles.keyboardWrap}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
+        >
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           {loading ? (
             <View style={styles.center}>
               <ActivityIndicator />
@@ -315,7 +328,8 @@ export default function EditPetScreen({ route, navigation }: any) {
               />
             </>
           )}
-        </View>
+        </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
   );
@@ -329,11 +343,19 @@ const styles = StyleSheet.create({
   contentSafe: {
     flex: 1,
   },
-  container: {
+  keyboardWrap: {
     flex: 1,
+  },
+  scroll: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  container: {
     backgroundColor: "#fff",
     paddingHorizontal: spacing.md,
     paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    flexGrow: 1,
   },
 
   center: {

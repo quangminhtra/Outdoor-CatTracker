@@ -1,8 +1,8 @@
 # Outdoor Cat Tracker - MS 11 TMU Capstone:
 
-### Muhammad-Hussain Al-lami |  Louis Chevalier |  Minh Quang Tran |  Nicholas Muttoo
-
 Outdoor Cat Tracker is a mobile application built with Expo, React Native, TypeScript, and Firebase. It is designed to help users monitor outdoor pets with live location views, geofence-based safe zone alerts, multi-pet account support, and pet profile management.
+
+### Muhammad-Hussain Al-lami |  Louis Chevalier |  Minh Quang Tran |  Nicholas Muttoo
 
 The app currently includes:
 - Firebase Authentication for account login and signup
